@@ -1,0 +1,14 @@
+[package]
+name = "infotainer"
+version = "0.1.0"
+authors = ["joppich <joppich@bricknet.de>"]
+
+[[bin]]
+name = "infotainer"
+path = "src/main.rs"
+
+[dependencies]
+env_logger = "*"
+futures = "0.1"
+actix = "0.7"
+actix-web = "0.7"
