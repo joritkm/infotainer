@@ -4,35 +4,90 @@ extern crate actix_web;
 
 extern crate env_logger;
 
-
 use std::time::{Instant, Duration};
 
 use actix::prelude::*;
 use actix_web::{
-    fs, http, middleware, server, ws, App, Error, HttpRequest, HttpResponse,
+    middleware, web, App, Error, HttpRequest, HttpResponse, HttpServer,
 };
+use actix_web_actors::ws;
+use actix_files as fs;
 
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 
+///Perform ws-handshake and create the socket.
+async fn wsa(req: HttpRequest, stream: web::Payload) -> Result<HttpResponse, Error> {
+    let res = ws::start(WebSock::new(), &req, stream);
+    res
+}
 
 ///Run websocket via actor, track alivenes of clients
-struct WsSession {
+struct WebSock {
     hb: Instant,
 }
 
-impl Actor for WsSession {
-    type Context = ws:WebsocketContext<Self>;
+impl Actor for WebSock {
+    type Context = ws::WebsocketContext<Self>;
 
     ///On start of actor begin monitoring heartbeat
     fn started(&mut self, ctx: &mut Self::Context) {
-        self.hb(ctx);
+        self.beat(ctx);
     }
 }
 
-///Perform ws-handshake and create the socket.
-fn wsa(r: &HttpRequest) -> Result(<HttpResponse,Error>) {
-    ws::start(r, InfoWs::new())
+impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSock {
+    fn handle(
+        &mut self,
+        msg: Result<ws::Message, ws::ProtocolError>,
+        ctx: &mut Self::Context,
+    ) {
+        match msg {
+            Ok(ws::Message::Ping(msg)) => {
+                self.hb = Instant::now();
+                ctx.pong(&msg);
+            }
+            Ok(ws::Message::Pong(_)) => {
+                self.hb = Instant::now();
+            }
+            Ok(ws::Message::Close(_)) => {
+                ctx.stop();
+            }
+            _ => ctx.stop(),
+        }
+    }
 }
 
+impl WebSock {
+    
+    fn new() -> Self {
+        Self { hb: Instant::now() }
+    }
+
+    fn beat(&self, ctx: &mut <Self as Actor>::Context) {
+        ctx.run_interval(HEARTBEAT_INTERVAL, |act, ctx| {
+            if Instant::now().duration_since(act.hb) > CLIENT_TIMEOUT {
+                ctx.stop();
+                return;
+            }
+            ctx.ping(b"");
+        });
+    }
+}
+
+#[actix_rt::main]
+async fn main() -> std::io::Result<()> {
+    std::env::set_var("RUST_LOG", "actix_server=info,actix_web=info");
+    env_logger::init();
+
+    HttpServer::new(|| {
+        App::new()
+            .wrap(middleware::Logger::default())
+            .service(web::resource("/ws/").route(web::get().to(wsa)))
+            .service(fs::Files::new("/", "static/").index_file("index.html"))
+    })
+    .bind("127.0.0.1:8080")?
+    .run()
+    .await
+}
