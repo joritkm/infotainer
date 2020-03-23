@@ -2,9 +2,13 @@ extern crate actix;
 
 extern crate actix_web;
 
+#[macro_use]
+extern crate log;
+
 extern crate env_logger;
 
 use std::time::{Instant, Duration};
+use std::str;
 
 use actix::prelude::*;
 use actix_web::{
@@ -33,6 +37,7 @@ impl Actor for WebSock {
 
     ///On start of actor begin monitoring heartbeat
     fn started(&mut self, ctx: &mut Self::Context) {
+        info!("New connection established.");
         self.beat(ctx);
     }
 }
@@ -44,6 +49,10 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSock {
         ctx: &mut Self::Context,
     ) {
         match msg {
+            Ok(ws::Message::Binary(msg)) => {
+                self.hb = Instant::now();
+                info!("Client message: {}", str::from_utf8(&msg).unwrap())
+            }
             Ok(ws::Message::Ping(msg)) => {
                 self.hb = Instant::now();
                 ctx.pong(&msg);
@@ -52,6 +61,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSock {
                 self.hb = Instant::now();
             }
             Ok(ws::Message::Close(_)) => {
+                info!("Received CLOSE from client.");
                 ctx.stop();
             }
             _ => ctx.stop(),
@@ -68,6 +78,7 @@ impl WebSock {
     fn beat(&self, ctx: &mut <Self as Actor>::Context) {
         ctx.run_interval(HEARTBEAT_INTERVAL, |act, ctx| {
             if Instant::now().duration_since(act.hb) > CLIENT_TIMEOUT {
+                warn!("Connection timed out. Closing.");
                 ctx.stop();
                 return;
             }
@@ -78,7 +89,7 @@ impl WebSock {
 
 #[actix_rt::main]
 async fn main() -> std::io::Result<()> {
-    std::env::set_var("RUST_LOG", "actix_server=info,actix_web=info");
+    std::env::set_var("RUST_LOG", "actix_server=info,actix_web=info,infotainer=debug");
     env_logger::init();
 
     HttpServer::new(|| {
