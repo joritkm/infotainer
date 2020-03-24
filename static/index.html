@@ -4,7 +4,7 @@
 <head>
   <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
   <title>Infotainer Terminal</title>
-  <meta name="description" content="Display BVG departures, Mensa-menus and other stuff...">
+  <meta name="description" content="Infotainer webclient - display various streamed data">
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
   <link rel="stylesheet" href="dist/infotainer.css" type="text/css">
@@ -16,10 +16,19 @@
       <h1> Infotainer Terminal </h1>
   </div>
   <div id="content">
-      <h3>Debug Output</h3>
-      <div id="debug-out"></div>
-      <button onclick="connect()">Connect</button>
-      <button onclick="disconnect()">Disconnect</button>
+    <div class="controls">
+      <div class="messages">
+        <h4>Messages</h4>
+        <input type=text id="message" />
+        <button onclick="socket_send('message')">Send</button>
+      </div>
+      <div class="subscriptions">
+        <h4>Subscriptions</h4>
+        <select id="subscription" name="subscription">
+        </select>
+        <button onclick="socket_send('subscription')">Subscribe</button>
+      </div>
+    </div>
   </div>
 </body>
 
