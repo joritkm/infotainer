@@ -37,18 +37,21 @@ extern crate serde;
 #[macro_use]
 extern crate log;
 
+#[macro_use]
+extern crate failure;
+
 extern crate env_logger;
 
 use std::time::{Instant, Duration};
 
 use actix::prelude::*;
 use actix_web::{
-    middleware, web, App, Error, HttpRequest, HttpResponse, HttpServer,
+    middleware, web, App, Error, HttpRequest, HttpResponse, HttpServer, error
 };
 use actix_web_actors::ws;
 use actix_files as fs;
-use serde::{Deserialize,Serialize};
-use serde_json::Result as SerdeResult;
+
+use uuid::Uuid;
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -64,20 +67,12 @@ struct WebSock {
     hb: Instant,
 }
 
-///SerDe schema for client messages
-#[derive(Serialize,Deserialize)]
-struct ClientMessageRaw {
-    #[serde(rename = "type")]
-    _type: String,
-    data: String
-}
-
 impl Actor for WebSock {
     type Context = ws::WebsocketContext<Self>;
 
     ///On start of actor begin monitoring heartbeat
     fn started(&mut self, ctx: &mut Self::Context) {
-        info!("New connection established.");
+        debug!("New connection established.");
         self.beat(ctx);
     }
 }
@@ -91,8 +86,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSock {
         match msg {
             Ok(ws::Message::Text(msg)) => {
                 self.hb = Instant::now();
-                let message: ClientMessageRaw = serde_json::from_str(&msg).unwrap();
-                info!("Message type: {}, Message data: {}", &message._type, &message.data);
+                debug!("Message received: {:?}", ClientMessage::new(&msg));
             }
             Ok(ws::Message::Ping(msg)) => {
                 self.hb = Instant::now();
@@ -102,7 +96,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSock {
                 self.hb = Instant::now();
             }
             Ok(ws::Message::Close(_)) => {
-                info!("Received CLOSE from client.");
+                debug!("Received CLOSE from client.");
                 ctx.stop();
             }
             _ => ctx.stop(),
@@ -125,6 +119,71 @@ impl WebSock {
             }
             ctx.ping(b"");
         });
+    }
+}
+
+#[derive(Debug, Fail, PartialEq, Clone)]
+pub enum ParseError {
+    #[fail(display="Unknown request Parameter: {}", _0)]
+    UnknownParameter(String),
+
+    #[fail(display="Unknown request Type: {}", _0)]
+    UnknownType(String),
+
+    #[fail(display="Request parameter missing: {}", _0)]
+    MissingParameter(String)
+}
+
+#[derive(Debug, PartialEq, Clone)]
+enum ClientRequest {
+    Get {param: String },
+    Add { param: String },
+    Remove { param: String }
+}
+
+impl ClientRequest {
+    fn from_str(raw: &str) -> Result<ClientRequest, Error> {
+        let mut params = raw.split("::");
+        let req_type = params
+            .next()
+            .ok_or(ParseError::MissingParameter(String::from("Request type")))
+            .map_err(|e| error::ErrorBadRequest(e))?
+            .to_lowercase();
+        let req_arg: String = params
+            .next()
+            .ok_or(ParseError::MissingParameter(String::from("Request Argument")))
+            .map_err(|e| error::ErrorBadRequest(e))?
+            .chars()
+            .filter(|c| { c.is_alphanumeric() })
+            .take(256)
+            .collect();
+        match req_type.as_str() {
+            "get" => {
+                Ok(ClientRequest::Get{ param : req_arg })
+            },
+            "add" => {
+                Ok(ClientRequest::Add{ param: req_arg})
+            },
+            "remove" => {
+                Ok(ClientRequest::Remove{ param: req_arg})
+            },
+            _ => {
+                Err(ParseError::UnknownType(String::from(raw)))
+                    .map_err(|e| error::ErrorBadRequest(e))
+            }
+        }       
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+struct ClientMessage {
+    req: ClientRequest,
+}
+
+impl ClientMessage {
+    fn new(raw: &str) -> Result<ClientMessage, Error> {
+        let request = ClientRequest::from_str(raw)?;
+        Ok(ClientMessage {req: request})   
     }
 }
 
