@@ -23,7 +23,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 TODO: 
- implement client message parsing
  implement subscription table
  implement subscribe to subscription
  */
@@ -43,10 +42,12 @@ extern crate failure;
 extern crate env_logger;
 
 use std::time::{Instant, Duration};
+use std::convert::TryFrom;
+use std::fmt;
 
 use actix::prelude::*;
 use actix_web::{
-    middleware, web, App, Error, HttpRequest, HttpResponse, HttpServer, error
+    middleware, web, http, App, Error, HttpRequest, HttpResponse, HttpServer, error
 };
 use actix_web_actors::ws;
 use actix_files as fs;
@@ -60,6 +61,15 @@ const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 async fn wsa(req: HttpRequest, stream: web::Payload) -> Result<HttpResponse, Error> {
     let res = ws::start(WebSock::new(), &req, stream);
     res
+}
+
+///Create a new ClientID
+async fn new_client() -> Result<HttpResponse, Error> {
+    let cli = ClientID::new();
+    let res: String = cli.to_string();
+    Ok(HttpResponse::build(http::StatusCode::OK)
+        .content_type("text/plain; charset=utf-8")
+        .body(res))
 }
 
 ///Run websocket via actor, track alivenes of clients
@@ -176,14 +186,50 @@ impl ClientRequest {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+struct ClientID {
+    uid: Uuid
+}
+
+impl ClientID {
+    fn new() -> ClientID {
+        ClientID {uid: Uuid::new_v4()}
+    }
+}
+
+impl TryFrom<&str> for ClientID {
+    type Error = uuid::Error;
+
+    fn try_from(id: &str) -> Result<ClientID, Self::Error> {
+        let uid = Uuid::parse_str(&id)?;
+        Ok(ClientID { uid: uid})
+    }
+}
+
+impl fmt::Display for ClientID {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.uid.to_simple())
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
 struct ClientMessage {
+    id: ClientID,
     req: ClientRequest,
 }
 
 impl ClientMessage {
     fn new(raw: &str) -> Result<ClientMessage, Error> {
-        let request = ClientRequest::from_str(raw)?;
-        Ok(ClientMessage {req: request})   
+        let mut msg_token = raw.split("|");
+        let msg_id = msg_token
+            .next()
+            .ok_or(error::ErrorForbidden("Missing identification."))?;
+        let msg_req = msg_token
+            .next()
+            .ok_or(error::ErrorBadRequest("Missing Request."))?;
+        let id = ClientID::try_from(msg_id)
+            .map_err(|e| error::ErrorForbidden(e))?;
+        let request = ClientRequest::from_str(msg_req)?;
+        Ok(ClientMessage {id: id, req: request})   
     }
 }
 
@@ -196,6 +242,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .wrap(middleware::Logger::default())
             .service(web::resource("/ws/").route(web::get().to(wsa)))
+            .service(web::resource("/id").route(web::get().to(new_client)))
             .service(fs::Files::new("/", "static/").index_file("index.html"))
     })
     .bind("127.0.0.1:8080")?
