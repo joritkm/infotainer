@@ -1,17 +1,19 @@
+const TOKENURL = "http://localhost:8080/id";
+const SOCKETURL = "ws://localhost:8080/ws/"
 const ADD = "add";
 const GET = "get";
 const DEL = "remove";
 const DELIM = "::";
-const TOKEN = btoa("placeholder");
-let SEARCHFIELD = null;
-let SUBFIELD = null;
+let token = null;
+let searchfield = null;
+let subfield = null;
 let socket = null;
 
 
 function connect() {
   disconnect();
   console.log("Connecting...");
-  socket = new WebSocket("ws://localhost:8080/ws/");
+  socket = new WebSocket(SOCKETURL);
 }
 
 function disconnect() {
@@ -26,15 +28,15 @@ function disconnect() {
 
 function sub_request(subscriptionID, del=false) {
   if (!subscriptionID) {
-    subscriptionID = SUBFIELD.options[SUBFIELD.selectedIndex].value;
+    subscriptionID = subfield.options[subfield.selectedIndex].value;
   }
-  return del ? ADD : DEL + DELIM + subscriptionID
+  return del ? DEL : ADD + DELIM + subscriptionID
 }
 
 function get_request(_data) {
   if (!_data) {
-    _data = SEARCHFIELD.value;
-    SEARCHFIELD.value = "";
+    _data = searchfield.value;
+    searchfield.value = "";
   }
   return GET + DELIM + _data
 }
@@ -50,7 +52,7 @@ function socket_send(_type, _data = null) {
   } else {
     throw _type + " is unknown"
   }
-  payload = TOKEN + "{" + payload + "}";
+  payload = token + "|" + payload;
   if (socket == null) {
     throw "Not connected to a socket"
   }
@@ -58,9 +60,13 @@ function socket_send(_type, _data = null) {
   socket.send(payload);
 }
 
-document.addEventListener("DOMContentLoaded", function () {
-  SEARCHFIELD = document.getElementById(GET);
-  SUBFIELD = document.getElementById(ADD);
+document.addEventListener("DOMContentLoaded", async function () {
+  searchfield = document.getElementById(GET);
+  subfield = document.getElementById(ADD);
+  if (!token) {
+    let tokenResp = await fetch(TOKENURL);
+    token = await tokenResp.text();
+  }
   connect();
   socket.onopen= function () {
     socket_send(ADD, "datasets");
