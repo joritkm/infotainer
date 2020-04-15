@@ -1,6 +1,9 @@
-const SUB = "subscription";
-const MSG = "message";
-let MSGFIELD = null;
+const ADD = "add";
+const GET = "get";
+const DEL = "remove";
+const DELIM = "::";
+const TOKEN = btoa("placeholder");
+let SEARCHFIELD = null;
 let SUBFIELD = null;
 let socket = null;
 
@@ -21,51 +24,45 @@ function disconnect() {
   }
 }
 
-function new_sub_request(_data) {
-  if (!_data) {
-    _data = SUBFIELD.options[SUBFIELD.selectedIndex].value;
+function sub_request(subscriptionID, del=false) {
+  if (!subscriptionID) {
+    subscriptionID = SUBFIELD.options[SUBFIELD.selectedIndex].value;
   }
-  return {
-    type: SUB,
-    data: _data
-  }
+  return del ? ADD : DEL + DELIM + subscriptionID
 }
 
-function new_message(_data) {
+function get_request(_data) {
   if (!_data) {
-    _data = MSGFIELD.value;
+    _data = SEARCHFIELD.value;
+    SEARCHFIELD.value = "";
   }
-  MSGFIELD.value = "";
-  return {
-    type: MSG,
-    data: _data
-  }
+  return GET + DELIM + _data
 }
 
 function socket_send(_type, _data = null) {
   let payload = null;
-  if (_type == "message") {
-    payload = new_message(_data);
-  } else if (_type == "subscription") {
-    payload = new_sub_request(_data);
+  if (_type == GET) {
+    payload = get_request(_data);
+  } else if (_type == ADD) {
+    payload = sub_request(_data);
+  } else if (_type == DEL) {
+    payload = sub_request(_data, del=true)
   } else {
     throw _type + " is unknown"
   }
-  if (!payload.data) {
-    throw "No data to send"
-  } 
+  payload = TOKEN + "{" + payload + "}";
   if (socket == null) {
     throw "Not connected to a socket"
   }
-  console.log("Sending " + payload.type + " request: \n" + payload.data);
-  socket.send(JSON.stringify(payload));
+  console.log("Sending\t" + payload);
+  socket.send(payload);
 }
 
 document.addEventListener("DOMContentLoaded", function () {
-  MSGFIELD = document.getElementById(MSG);
-  SUBFIELD = document.getElementById(SUB);
+  SEARCHFIELD = document.getElementById(GET);
+  SUBFIELD = document.getElementById(ADD);
   connect();
   socket.onopen= function () {
-    socket_send(SUB, "datasets");
+    socket_send(ADD, "datasets");
   };
 });
