@@ -41,8 +41,10 @@ extern crate failure;
 
 extern crate env_logger;
 
+use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::fmt;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use actix::prelude::*;
@@ -50,6 +52,8 @@ use actix_files as fs;
 use actix_web::{error, http, middleware, web, App, Error, HttpRequest, HttpResponse, HttpServer};
 use actix_web_actors::ws;
 
+#[macro_use]
+use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
@@ -125,7 +129,7 @@ impl WebSock {
     }
 }
 
-#[derive(Debug, Fail, PartialEq, Clone)]
+#[derive(Debug, Fail, PartialEq, Clone, Serialize, Deserialize)]
 pub enum ParseError {
     #[fail(display = "Unknown request Parameter: {}", _0)]
     UnknownParameter(String),
@@ -135,6 +139,15 @@ pub enum ParseError {
 
     #[fail(display = "Request parameter missing: {}", _0)]
     MissingParameter(String),
+
+    #[fail(display = "Unable to parse provided input data: {}", _0)]
+    InvalidInput(String),
+}
+
+impl From<serde_json::Error> for ParseError {
+    fn from(e: serde_json::Error) -> ParseError {
+        ParseError::InvalidInput(format!("{}", e))
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -172,16 +185,17 @@ impl ClientRequest {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 struct ClientID {
     uid: Uuid,
 }
 
 impl ClientID {
     fn new() -> ClientID {
-        ClientID {
+        let id = ClientID {
             uid: Uuid::new_v4(),
-        }
+        };
+        id
     }
 }
 
@@ -224,6 +238,67 @@ impl ClientMessage {
     }
 }
 
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+struct SubscriptionMeta {
+    name: String,
+}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+struct Subscription {
+    id: Uuid,
+    metadata: Vec<u8>,
+}
+
+impl Subscription {
+    fn new(raw: SubscriptionMeta) -> Result<Subscription, ParseError> {
+        let meta = serde_json::to_vec(&raw)?;
+        Ok(Subscription {
+            id: Uuid::new_v4(),
+            metadata: meta,
+        })
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+struct Subscriptions {
+    store: HashMap<Uuid, Box<Subscription>>,
+}
+
+impl Subscriptions {
+    fn new() -> Subscriptions {
+        Subscriptions {
+            store: HashMap::new(),
+        }
+    }
+
+    fn update(mut self, sub: Subscription) {
+        self.store.insert(sub.id, Box::new(sub));
+    }
+
+    fn fetch(&self, id: &Uuid) -> Result<&Box<Subscription>, Error> {
+        self.store
+            .get(&id)
+            .ok_or(error::ErrorNotFound("No such entry"))
+    }
+
+    fn remove(mut self, id: &Uuid) {
+        self.store.remove(&id);
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+struct Sessions {
+    store: HashMap<Uuid, Vec<Uuid>>,
+}
+
+impl Sessions {
+    fn new() -> Sessions {
+        Sessions {
+            store: HashMap::new(),
+        }
+    }
+}
+
 #[actix_rt::main]
 async fn main() -> std::io::Result<()> {
     std::env::set_var(
@@ -231,9 +306,13 @@ async fn main() -> std::io::Result<()> {
         "actix_server=info,actix_web=info,infotainer=debug",
     );
     env_logger::init();
+    let sessions = web::Data::new(Mutex::new(Sessions::new()));
+    let subscriptions = web::Data::new(Mutex::new(Subscriptions::new()));
 
-    HttpServer::new(|| {
+    HttpServer::new(move || {
         App::new()
+            .app_data(sessions.clone())
+            .app_data(subscriptions.clone())
             .wrap(middleware::Logger::default())
             .service(web::resource("/ws/").route(web::get().to(wsa)))
             .service(web::resource("/id").route(web::get().to(new_client)))
