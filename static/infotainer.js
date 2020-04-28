@@ -1,3 +1,4 @@
+const MAGICTOKEN = "magictoken"
 const TOKENURL = "http://localhost:8080/id";
 const SOCKETURL = "ws://localhost:8080/ws/"
 const ADD = "add";
@@ -64,7 +65,12 @@ document.addEventListener("DOMContentLoaded", async function () {
   searchfield = document.getElementById(GET);
   subfield = document.getElementById(ADD);
   if (!token) {
-    let tokenResp = await fetch(TOKENURL);
+    let tokenResp = await fetch(TOKENURL, {
+      method: 'POST',
+      headers: {
+        'X-Auth-Token': MAGICTOKEN
+      }
+    });
     token = await tokenResp.text();
   }
   connect();

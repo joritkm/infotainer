@@ -48,7 +48,9 @@ use std::time::{Duration, Instant};
 
 use actix::prelude::*;
 use actix_files as fs;
-use actix_web::{error, http, middleware, web, App, Error, HttpRequest, HttpResponse, HttpServer};
+use actix_web::{
+    error, guard, http, middleware, web, App, Error, HttpRequest, HttpResponse, HttpServer,
+};
 use actix_web_actors::ws;
 
 #[macro_use]
@@ -57,6 +59,8 @@ use uuid::Uuid;
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
+// static string for mock authentication
+const MAGICTOKEN: &str = "magictoken";
 
 ///Perform ws-handshake and create the socket.
 async fn wsa(req: HttpRequest, stream: web::Payload) -> Result<HttpResponse, Error> {
@@ -65,12 +69,13 @@ async fn wsa(req: HttpRequest, stream: web::Payload) -> Result<HttpResponse, Err
 }
 
 ///Create a new ClientID
-async fn new_client() -> Result<HttpResponse, Error> {
+async fn new_client(sessions: web::Data<Mutex<Sessions>>) -> Result<HttpResponse, Error> {
     let cli = ClientID::new();
-    let res: String = cli.to_string();
+    sessions.lock().unwrap().store.insert(cli.uid, Vec::new());
+    debug!("{:?}", sessions);
     Ok(HttpResponse::build(http::StatusCode::OK)
         .content_type("text/plain; charset=utf-8")
-        .body(res))
+        .body(cli.to_string()))
 }
 
 ///Run websocket via actor, track alivenes of clients
@@ -314,7 +319,13 @@ async fn main() -> std::io::Result<()> {
             .app_data(subscriptions.clone())
             .wrap(middleware::Logger::default())
             .service(web::resource("/ws/").route(web::get().to(wsa)))
-            .service(web::resource("/id").route(web::get().to(new_client)))
+            .service(
+                web::resource("/id").route(
+                    web::post()
+                        .guard(guard::Header("X-Auth-Token", MAGICTOKEN))
+                        .to(new_client),
+                ),
+            )
             .service(fs::Files::new("/", "static/").index_file("index.html"))
     })
     .bind("127.0.0.1:8080")?
