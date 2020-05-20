@@ -26,281 +26,45 @@ TODO:
  implement subscribe to subscription
  */
 
-extern crate actix;
-
-extern crate actix_web;
-
-extern crate serde;
-
 #[macro_use]
 extern crate log;
 
 #[macro_use]
 extern crate failure;
 
-extern crate env_logger;
-
-use std::collections::HashMap;
-use std::convert::TryFrom;
-use std::fmt;
-use std::sync::Mutex;
-use std::time::{Duration, Instant};
-
-use actix::prelude::*;
-use actix_files as fs;
-use actix_web::{
-    error, guard, http, middleware, web, App, Error, HttpRequest, HttpResponse, HttpServer,
-};
+use actix_web::{ http, web, error, guard, middleware, HttpServer, App };
 use actix_web_actors::ws;
+use actix_files as fs;
 
-#[macro_use]
-use serde::{Serialize, Deserialize};
-use uuid::Uuid;
+use tokio::sync::Mutex;
 
-const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
-const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
+use websocket::WebSock;
+use session::Sessions;
+use subscription::Subscriptions;
+use client::ClientID;
+
+mod errors;
+mod websocket;
+mod session;
+mod subscription;
+mod client;
+
 // static string for mock authentication
 const MAGICTOKEN: &str = "magictoken";
 
 ///Perform ws-handshake and create the socket.
-async fn wsa(req: HttpRequest, stream: web::Payload) -> Result<HttpResponse, Error> {
+async fn wsa(req: web::HttpRequest, stream: web::Payload) -> Result<web::HttpResponse, error::Error> {
     let res = ws::start(WebSock::new(), &req, stream);
     res
 }
 
 ///Create a new ClientID
-async fn new_client(sessions: web::Data<Mutex<Sessions>>) -> Result<HttpResponse, Error> {
+async fn new_client(sessions: web::Data<Mutex<Sessions>>) -> Result<web::HttpResponse, error::Error> {
     let cli = ClientID::new();
-    sessions.lock().unwrap().store.insert(cli.uid, Vec::new());
-    debug!("{:?}", sessions);
-    Ok(HttpResponse::build(http::StatusCode::OK)
+    sessions.try_lock().unwrap().get_or_insert(&cli);
+    Ok(web::HttpResponse::build(http::StatusCode::OK)
         .content_type("text/plain; charset=utf-8")
         .body(cli.to_string()))
-}
-
-///Run websocket via actor, track alivenes of clients
-struct WebSock {
-    hb: Instant,
-}
-
-impl Actor for WebSock {
-    type Context = ws::WebsocketContext<Self>;
-
-    ///On start of actor begin monitoring heartbeat
-    fn started(&mut self, ctx: &mut Self::Context) {
-        debug!("New connection established.");
-        self.beat(ctx);
-    }
-}
-
-impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSock {
-    fn handle(&mut self, msg: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
-        match msg {
-            Ok(ws::Message::Text(msg)) => {
-                self.hb = Instant::now();
-                debug!("Message received: {:?}", ClientMessage::new(&msg));
-            }
-            Ok(ws::Message::Ping(msg)) => {
-                self.hb = Instant::now();
-                ctx.pong(&msg);
-            }
-            Ok(ws::Message::Pong(_)) => {
-                self.hb = Instant::now();
-            }
-            Ok(ws::Message::Close(_)) => {
-                debug!("Received CLOSE from client.");
-                ctx.stop();
-            }
-            _ => ctx.stop(),
-        }
-    }
-}
-
-impl WebSock {
-    fn new() -> Self {
-        Self { hb: Instant::now() }
-    }
-
-    fn beat(&self, ctx: &mut <Self as Actor>::Context) {
-        ctx.run_interval(HEARTBEAT_INTERVAL, |act, ctx| {
-            if Instant::now().duration_since(act.hb) > CLIENT_TIMEOUT {
-                warn!("Connection timed out. Closing.");
-                ctx.stop();
-                return;
-            }
-            ctx.ping(b"");
-        });
-    }
-}
-
-#[derive(Debug, Fail, PartialEq, Clone, Serialize, Deserialize)]
-pub enum ParseError {
-    #[fail(display = "Unknown request Parameter: {}", _0)]
-    UnknownParameter(String),
-
-    #[fail(display = "Unknown request Type: {}", _0)]
-    UnknownType(String),
-
-    #[fail(display = "Request parameter missing: {}", _0)]
-    MissingParameter(String),
-
-    #[fail(display = "Unable to parse provided input data: {}", _0)]
-    InvalidInput(String),
-}
-
-impl From<serde_json::Error> for ParseError {
-    fn from(e: serde_json::Error) -> ParseError {
-        ParseError::InvalidInput(format!("{}", e))
-    }
-}
-
-#[derive(Debug, PartialEq, Clone)]
-enum ClientRequest {
-    Get { param: String },
-    Add { param: String },
-    Remove { param: String },
-}
-
-impl ClientRequest {
-    fn from_str(raw: &str) -> Result<ClientRequest, Error> {
-        let mut params = raw.split("::");
-        let req_type = params
-            .next()
-            .ok_or(ParseError::MissingParameter(String::from("Request type")))
-            .map_err(|e| error::ErrorBadRequest(e))?
-            .to_lowercase();
-        let req_arg: String = params
-            .next()
-            .ok_or(ParseError::MissingParameter(String::from(
-                "Request Argument",
-            )))
-            .map_err(|e| error::ErrorBadRequest(e))?
-            .chars()
-            .filter(|c| c.is_alphanumeric())
-            .take(256)
-            .collect();
-        match req_type.as_str() {
-            "get" => Ok(ClientRequest::Get { param: req_arg }),
-            "add" => Ok(ClientRequest::Add { param: req_arg }),
-            "remove" => Ok(ClientRequest::Remove { param: req_arg }),
-            _ => Err(ParseError::UnknownType(String::from(raw)))
-                .map_err(|e| error::ErrorBadRequest(e)),
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-struct ClientID {
-    uid: Uuid,
-}
-
-impl ClientID {
-    fn new() -> ClientID {
-        let id = ClientID {
-            uid: Uuid::new_v4(),
-        };
-        id
-    }
-}
-
-impl TryFrom<&str> for ClientID {
-    type Error = uuid::Error;
-
-    fn try_from(id: &str) -> Result<ClientID, Self::Error> {
-        let uid = Uuid::parse_str(&id)?;
-        Ok(ClientID { uid: uid })
-    }
-}
-
-impl fmt::Display for ClientID {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.uid.to_simple())
-    }
-}
-
-#[derive(Debug, PartialEq, Clone)]
-struct ClientMessage {
-    id: ClientID,
-    req: ClientRequest,
-}
-
-impl ClientMessage {
-    fn new(raw: &str) -> Result<ClientMessage, Error> {
-        let mut msg_token = raw.split("|");
-        let msg_id = msg_token
-            .next()
-            .ok_or(error::ErrorForbidden("Missing identification."))?;
-        let msg_req = msg_token
-            .next()
-            .ok_or(error::ErrorBadRequest("Missing Request."))?;
-        let id = ClientID::try_from(msg_id).map_err(|e| error::ErrorForbidden(e))?;
-        let request = ClientRequest::from_str(msg_req)?;
-        Ok(ClientMessage {
-            id: id,
-            req: request,
-        })
-    }
-}
-
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-struct SubscriptionMeta {
-    name: String,
-}
-
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-struct Subscription {
-    id: Uuid,
-    metadata: Vec<u8>,
-}
-
-impl Subscription {
-    fn new(raw: SubscriptionMeta) -> Result<Subscription, ParseError> {
-        let meta = serde_json::to_vec(&raw)?;
-        Ok(Subscription {
-            id: Uuid::new_v4(),
-            metadata: meta,
-        })
-    }
-}
-
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-struct Subscriptions {
-    store: HashMap<Uuid, Box<Subscription>>,
-}
-
-impl Subscriptions {
-    fn new() -> Subscriptions {
-        Subscriptions {
-            store: HashMap::new(),
-        }
-    }
-
-    fn update(mut self, sub: Subscription) {
-        self.store.insert(sub.id, Box::new(sub));
-    }
-
-    fn fetch(&self, id: &Uuid) -> Result<&Box<Subscription>, Error> {
-        self.store
-            .get(&id)
-            .ok_or(error::ErrorNotFound("No such entry"))
-    }
-
-    fn remove(mut self, id: &Uuid) {
-        self.store.remove(&id);
-    }
-}
-
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-struct Sessions {
-    store: HashMap<Uuid, Vec<Uuid>>,
-}
-
-impl Sessions {
-    fn new() -> Sessions {
-        Sessions {
-            store: HashMap::new(),
-        }
-    }
 }
 
 #[actix_rt::main]
@@ -315,8 +79,8 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         App::new()
-            .app_data(sessions.clone())
-            .app_data(subscriptions.clone())
+            .app_data(sessions.to_owned())
+            .app_data(subscriptions.to_owned())
             .wrap(middleware::Logger::default())
             .service(web::resource("/ws/").route(web::get().to(wsa)))
             .service(
