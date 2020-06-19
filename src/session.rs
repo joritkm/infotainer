@@ -67,7 +67,8 @@ pub mod tests {
 
     #[test]
     fn test_session() {
-        let dummy = Session{ client: ClientID::new(), subscriptions: vec![Uuid::new_v4(),Uuid::new_v4()] };
+        let dummy = Session{ client: ClientID::from(Uuid::new_v4()),
+                             subscriptions: vec![Uuid::new_v4(),Uuid::new_v4()] };
         let session_entry = (&dummy.client.id(), &dummy.subscriptions);
         let session: Session = session_entry.into();
         assert_eq!(session, dummy);
@@ -77,7 +78,7 @@ pub mod tests {
     fn test_sessions() {
         let subscription = Uuid::new_v4();
         let mut sessions = Sessions::new();
-        let mut session = sessions.get_or_insert(&ClientID::new());
+        let mut session = sessions.get_or_insert(&ClientID::from(Uuid::new_v4()));
         let session_entry = Session{ client: session.client.to_owned(), subscriptions: vec![]};
         assert_eq!(session, session_entry);
         session.subscriptions.push(subscription);

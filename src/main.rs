@@ -32,6 +32,7 @@ extern crate log;
 #[macro_use]
 extern crate failure;
 
+use std::convert::TryFrom;
 use actix_web::{ http, web, error, guard, middleware, HttpServer, App };
 use actix_web_actors::ws;
 use actix_files as fs;
@@ -49,7 +50,7 @@ mod session;
 mod subscription;
 mod client;
 
-// static string for mock authentication
+// this brave static string guards the session registry
 const MAGICTOKEN: &str = "magictoken";
 
 ///Perform ws-handshake and create the socket.
@@ -59,12 +60,13 @@ async fn wsa(req: web::HttpRequest, stream: web::Payload) -> Result<web::HttpRes
 }
 
 ///Create a new ClientID
-async fn new_client(sessions: web::Data<Mutex<Sessions>>) -> Result<web::HttpResponse, error::Error> {
-    let cli = ClientID::new();
-    sessions.try_lock().unwrap().get_or_insert(&cli);
+async fn client_id(sessions: web::Data<Mutex<Sessions>>) -> Result<web::HttpResponse, error::Error> {
+    // TODO: Pending the renaming of sessions, remove this and accept posts with their own uuids from new clients. 
+    let client_id = ClientID::try_from("89e93972-cb91-4511-944d-30de98a87199").unwrap();
+    let client = sessions.try_lock().map_err(|e| error::ErrorInternalServerError(e))?.get_or_insert(&client_id);
     Ok(web::HttpResponse::build(http::StatusCode::OK)
-        .content_type("text/plain; charset=utf-8")
-        .body(cli.to_string()))
+        .content_type("application/json; charset=utf-8")
+        .json(client))
 }
 
 #[actix_rt::main]
@@ -87,7 +89,7 @@ async fn main() -> std::io::Result<()> {
                 web::resource("/id").route(
                     web::post()
                         .guard(guard::Header("X-Auth-Token", MAGICTOKEN))
-                        .to(new_client),
+                        .to(client_id),
                 ),
             )
             .service(fs::Files::new("/", "static/").index_file("index.html"))

@@ -48,13 +48,6 @@ pub struct ClientID {
 }
 
 impl ClientID {
-    pub fn new() -> ClientID {
-        let id = ClientID {
-            uid: Uuid::new_v4(),
-        };
-        id
-    }
-
     pub fn id(&self) -> Uuid {
         self.uid
     }
