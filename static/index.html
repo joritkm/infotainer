@@ -16,6 +16,10 @@
       <h1> Infotainer Terminal </h1>
   </div>
   <div id="content">
+    <div id="clientSession" class="displays">
+      <h4>Current Session Status</h4>
+      <span id="clientSessionStatus">Not connected</span>
+    </div>
     <div class="controls">
       <div class="messages">
         <h4>Messages</h4>
@@ -23,7 +27,7 @@
         <button onclick="socket_send('get')">Send</button>
       </div>
       <div class="subscriptions">
-        <h4>Subscriptions</h4>
+        <h4>Available Subscriptions</h4>
         <select id="add" name="subscription">
         </select>
         <button onclick="socket_send('add')">Subscribe</button>

@@ -5,9 +5,10 @@ const ADD = "add";
 const GET = "get";
 const DEL = "remove";
 const DELIM = "::";
-let token = null;
+const storage = window.sessionStorage;
 let searchfield = null;
 let subfield = null;
+let sessionStatusDisplay = null;
 let socket = null;
 
 
@@ -42,6 +43,11 @@ function get_request(_data) {
   return GET + DELIM + _data
 }
 
+function client_id() {
+  const session = JSON.parse(storage.getItem("clientSession"));
+  return session.client.uid;
+}
+
 function socket_send(_type, _data = null) {
   let payload = null;
   if (_type == GET) {
@@ -53,7 +59,7 @@ function socket_send(_type, _data = null) {
   } else {
     throw _type + " is unknown"
   }
-  payload = token + "|" + payload;
+  payload = client_id() + "|" + payload;
   if (socket == null) {
     throw "Not connected to a socket"
   }
@@ -61,17 +67,26 @@ function socket_send(_type, _data = null) {
   socket.send(payload);
 }
 
+function setSessionStatus(clientSession) {
+  let sessionString = "ID: " + clientSession.client.uid;
+  console.log(sessionString);
+  sessionStatusDisplay.textContent = sessionString;
+}
+
 document.addEventListener("DOMContentLoaded", async function () {
   searchfield = document.getElementById(GET);
   subfield = document.getElementById(ADD);
-  if (!token) {
+  sessionStatusDisplay = document.getElementById("clientSessionStatus");
+  if (!storage.getItem('clientSession')) {
     let tokenResp = await fetch(TOKENURL, {
       method: 'POST',
       headers: {
         'X-Auth-Token': MAGICTOKEN
       }
     });
-    token = await tokenResp.text();
+    const client = await tokenResp.json();
+    storage.setItem('clientSession', JSON.stringify(client));
+    setSessionStatus(client);
   }
   connect();
   socket.onopen= function () {
