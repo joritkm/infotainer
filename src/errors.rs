@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+/// This is messy and for now holds arbitrary custom errors.
 #[derive(Debug, Fail, PartialEq, Clone, Serialize, Deserialize)]
 pub enum ClientError {
     #[fail(display = "Unknown request Parameter: {}", _0)]
@@ -7,6 +8,12 @@ pub enum ClientError {
 
     #[fail(display = "Unknown request Type: {}", _0)]
     UnknownType(String),
+
+    #[fail(display = "Missing identification: {}", _0)]
+    MissingIdentification(String),
+
+    #[fail(display = "Missing request: {}", _0)]
+    MissingRequest(String),
 
     #[fail(display = "Request parameter missing: {}", _0)]
     MissingParameter(String),

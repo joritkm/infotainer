@@ -32,41 +32,29 @@ extern crate log;
 #[macro_use]
 extern crate failure;
 
-use std::convert::TryFrom;
-use actix_web::{ http, web, error, guard, middleware, HttpServer, App };
-use actix_web_actors::ws;
-use actix_files as fs;
-
-use tokio::sync::Mutex;
-
-use websocket::WebSock;
-use client_session::ClientSessions;
-use subscription::Subscriptions;
-use client::ClientID;
-
 mod errors;
-mod websocket;
-mod client_session;
+mod protocol;
+mod pubsub;
 mod subscription;
-mod client;
+mod websocket;
 
-// this brave static string guards the session registry
-const MAGICTOKEN: &str = "magictoken";
+use actix::prelude::{Actor, Addr};
+use actix_files as fs;
+use actix_web::{error, middleware, web, App, HttpServer};
+use actix_web_actors::ws;
+
+use pubsub::PubSubServer;
+use websocket::WebSocketSession;
 
 ///Perform ws-handshake and create the socket.
-async fn wsa(req: web::HttpRequest, stream: web::Payload) -> Result<web::HttpResponse, error::Error> {
-    let res = ws::start(WebSock::new(), &req, stream);
+async fn wsa(
+    req: web::HttpRequest,
+    stream: web::Payload,
+    pubsub_server: web::Data<Addr<PubSubServer>>,
+) -> Result<web::HttpResponse, error::Error> {
+    let websocket_session = WebSocketSession::new(pubsub_server.get_ref());
+    let res = ws::start(websocket_session, &req, stream);
     res
-}
-
-///Create a new ClientID
-async fn client_id(sess_client: web::Data<Mutex<ClientSessions>>) -> Result<web::HttpResponse, error::Error> {
-    // TODO: Pending the renaming of sessions, remove this and accept posts with their own uuids from new clients. 
-    let client_id = ClientID::try_from("89e93972-cb91-4511-944d-30de98a87199").unwrap();
-    let client = sess_client.try_lock().map_err(|e| error::ErrorInternalServerError(e))?.get_or_insert(&client_id);
-    Ok(web::HttpResponse::build(http::StatusCode::OK)
-        .content_type("application/json; charset=utf-8")
-        .json(client))
 }
 
 #[actix_rt::main]
@@ -76,22 +64,12 @@ async fn main() -> std::io::Result<()> {
         "actix_server=info,actix_web=info,infotainer=debug",
     );
     env_logger::init();
-    let sessions = web::Data::new(Mutex::new(ClientSessions::new()));
-    let subscriptions = web::Data::new(Mutex::new(Subscriptions::new()));
-
+    let pubsub_server = PubSubServer::new().expect("Could not initiate PubSub server.").start();
     HttpServer::new(move || {
         App::new()
-            .app_data(sessions.to_owned())
-            .app_data(subscriptions.to_owned())
+            .app_data(pubsub_server.clone())
             .wrap(middleware::Logger::default())
             .service(web::resource("/ws/").route(web::get().to(wsa)))
-            .service(
-                web::resource("/id").route(
-                    web::post()
-                        .guard(guard::Header("X-Auth-Token", MAGICTOKEN))
-                        .to(client_id),
-                ),
-            )
             .service(fs::Files::new("/", "static/").index_file("index.html"))
     })
     .bind("127.0.0.1:8080")?
