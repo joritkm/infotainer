@@ -1,3 +1,4 @@
+use uuid::Error;
 use serde::{Deserialize, Serialize};
 
 /// This is messy and for now holds arbitrary custom errors.
@@ -20,10 +21,19 @@ pub enum ClientError {
 
     #[fail(display = "Unable to parse provided input data: {}", _0)]
     InvalidInput(String),
+    
+    #[fail(display = "Error during publication delivery: {}", _0)]
+    PublishingError(String),
 }
 
 impl From<serde_json::Error> for ClientError {
     fn from(e: serde_json::Error) -> ClientError {
+        ClientError::InvalidInput(format!("{}", e))
+    }
+}
+
+impl From<uuid::Error> for ClientError {
+    fn from(e: uuid::Error) -> ClientError {
         ClientError::InvalidInput(format!("{}", e))
     }
 }

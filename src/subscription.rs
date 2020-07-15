@@ -91,11 +91,11 @@ impl Subscriptions {
     }
 
     /// Attempts to retrieve a `crate::subscription::Subscription` from the subscription store
-    pub fn fetch(&self, id: &Uuid) -> Result<Subscription, error::Error> {
+    pub fn fetch(&self, id: &Uuid) -> Result<Subscription, ClientError> {
         if let Some(sub) = self.store.get_key_value(id) {
             Ok(sub.1.clone())
         } else {
-            Err(error::ErrorNotFound("No such entry"))
+            Err(ClientError::InvalidInput(String::from("No such entry")))
         }
     }
 

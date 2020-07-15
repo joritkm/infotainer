@@ -6,20 +6,20 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::errors::ClientError;
+use crate::pubsub::Publication;
 
 /// Represents a requested task from a connected client
 #[derive(Debug, PartialEq, Clone)]
 pub enum ClientRequest {
-    /// Get information on a specific subscription or retrieve the
-    /// current subscription index and its metadata.
-    Get { param: String },
+    /// Get information on a specific subscription
+    Get { param: Uuid },
     /// Add client to a Subscription, creating it, if it doesn't exist
-    Add { param: String },
+    Add { param: Uuid },
     /// Remove client from a Subscription, deleting it, if the Subscription
     /// was created by client
-    Remove { param: String },
+    Remove { param: Uuid },
     /// Publish a new message to subscribed clients
-    Publish { param: String },
+    Publish { param: (Uuid, Publication) },
 }
 
 impl TryFrom<&str> for ClientRequest {
@@ -48,10 +48,14 @@ impl TryFrom<&str> for ClientRequest {
             .take(256)
             .collect();
         match req_type.as_str() {
-            "get" => Ok(ClientRequest::Get { param: req_arg }),
-            "add" => Ok(ClientRequest::Add { param: req_arg }),
-            "remove" => Ok(ClientRequest::Remove { param: req_arg }),
-            "publish" => Ok(ClientRequest::Publish { param: req_arg }),
+            "get" => Ok(ClientRequest::Get { param: Uuid::parse_str(&req_arg)? }),
+            "add" => Ok(ClientRequest::Add { param: Uuid::parse_str(&req_arg)? }),
+            "remove" => Ok(ClientRequest::Remove { param: Uuid::parse_str(&req_arg)? }),
+            "publish" => Ok({
+                let sub_id = Uuid::parse_str(&req_arg[..36])?;
+                let data: Publication = serde_json::from_str(&req_arg[36..])?;
+                ClientRequest::Publish { param: (sub_id, data) }
+            }),
             _ => Err(ClientError::UnknownType(String::from(raw))),
         }
     }
@@ -97,7 +101,7 @@ impl fmt::Display for ClientID {
 /// Represents a message from a connected client,
 /// including the clients identifying uuid and a request
 #[derive(Debug, PartialEq, Clone, Message)]
-#[rtype(result = "()")]
+#[rtype(result = "Result<(),ClientError>")]
 pub struct ClientMessage {
     pub id: ClientID,
     pub req: ClientRequest,
@@ -108,8 +112,6 @@ impl TryFrom<&str> for ClientMessage {
     /// the websocket. Checks if the message follows this protocol:
     /// * The message consists of two parts: an identifying uuid and a request
     /// * Identifying uuid and request are separated by "|"
-    ///TODO: move id matching to own method and sanitize properly
-    ///TODO: check with ClientSessions if id exists and map permissions
     type Error = ClientError;
     fn try_from(raw: &str) -> Result<ClientMessage, Self::Error> {
         let mut msg_token = raw.split("|");
