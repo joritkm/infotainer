@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use actix::prelude::{Actor, Context, Recipient, Message, Handler};
 
-use crate::protocol::{ClientID, ClientMessage, ClientRequest::*, ClientRequest};
+use crate::protocol::{ClientMessage, ClientRequest};
 use crate::errors::ClientError;
 use crate::subscription::{Subscription, Subscriptions, SubscriptionMeta};
 
@@ -73,33 +73,37 @@ impl Handler<ClientMessage> for PubSubServer {
     fn handle(&mut self, msg: ClientMessage, _: &mut Context<Self>) -> Result<(), ClientError> {
         match msg.req {
             ClientRequest::Add { param }=> {
-                if let s = self.subs.fetch(&param)? {
-                    Ok(s.handle_subscribers(&msg.id, 0))
-                } else {
-                    let new_sub_meta = SubscriptionMeta { name: format!("{}", msg.id) };
-                    let new_sub = Subscription::new(new_sub_meta)?;
-                    Ok(self.subs.update(&new_sub))
+                match self.subs.fetch(&param) {
+                    Ok(mut s) => Ok(s.handle_subscribers(&msg.id, 0)),
+                    Err(e) => {
+                        info!("{} :: Creating new subscription.", e);
+                        let new_sub_meta = SubscriptionMeta { name: format!("{}", msg.id) };
+                        let new_sub = Subscription::new(new_sub_meta)?;
+                        Ok(self.subs.update(&new_sub))
+                    }
                 }
             },
             ClientRequest::Get { param } => {
-                if let s = self.subs.fetch(&param)? {
-                    let subscription_info = Publication::new(&serde_json::to_string_pretty(&s)?);
-                    self.sessions.get(&msg.id.id())
-                                    .ok_or(ClientError::InvalidInput(String::from("Invalid ClientID")))?
-                                    .do_send(subscription_info)
-                                    .map_err(|e| ClientError::PublishingError(String::from("Failed sending requested Subscription")))
-                } else {
-                    Err(ClientError::InvalidInput(String::from("No such subscription")))
-                }
+                let s = self.subs.fetch(&param)?; 
+                let subscription_info = Publication::new(&serde_json::to_string_pretty(&s)?);
+                self.sessions.get(&msg.id.id())
+                                .ok_or(ClientError::InvalidInput(String::from("Invalid ClientID")))?
+                                .do_send(subscription_info)
+                                .map_err( |_e|ClientError::PublishingError(String::from("Failed sending requested Subscription")))
             },
             ClientRequest::Publish { param } => {
-                if let s = self.subs.fetch(&param.0)? {
-                    Ok(self.publish(&s.id, &param.1)?)
-                } else {
-                    Err(ClientError::PublishingError(String::from("No such subscription")))
-                }
+                let s = self.subs.fetch(&param.0)?;
+                Ok(self.publish(&s.id, &param.1)?)
             },
-            ClientRequest::Remove { param } => {}
+            ClientRequest::Remove { param } => {
+                let mut s = self.subs.fetch(&param)?;
+                let meta: SubscriptionMeta = serde_json::from_slice(&s.metadata)?;
+                if meta.name == format!("{}", msg.id) {
+                    Ok(self.subs.remove(&s.id))
+                } else {
+                    Ok(s.handle_subscribers(&msg.id, 1))
+                }
+            }
         }
     }
 }
