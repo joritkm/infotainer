@@ -64,7 +64,9 @@ async fn main() -> std::io::Result<()> {
         "actix_server=info,actix_web=info,infotainer=debug",
     );
     env_logger::init();
-    let pubsub_server = PubSubServer::new().expect("Could not initiate PubSub server.").start();
+    let pubsub_server = PubSubServer::new()
+        .expect("Could not initiate PubSub server.")
+        .start();
     HttpServer::new(move || {
         App::new()
             .app_data(pubsub_server.clone())

@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use actix_web::error;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -33,7 +32,7 @@ impl Subscription {
         Ok(Subscription {
             id: Uuid::new_v4(),
             metadata: meta_vec,
-            subscribers: Vec::new()
+            subscribers: Vec::new(),
         })
     }
 
@@ -52,19 +51,15 @@ impl Subscription {
 
     /// Handles removal and addition of subscribers. Any non-zero value
     /// for action will attempt to remove ClientID from subscribers.
-    pub fn handle_subscribers(
-        &mut self,
-        client: &ClientID,
-        action: usize,
-    ) {
+    pub fn handle_subscribers(&mut self, client: &ClientID, action: usize) {
         match action {
             0 => self.append_subscriber(client),
-            _ => self.remove_subscriber(client)
+            _ => self.remove_subscriber(client),
         }
     }
 }
 
-/// Holds the subscription store. Subscriptions are stored 
+/// Holds the subscription store. Subscriptions are stored
 /// in a HashMap, identified by their id.
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct Subscriptions {
@@ -113,14 +108,19 @@ pub mod tests {
     #[test]
     fn test_subscription() {
         let dummy_client = ClientID::from(Uuid::new_v4());
-        let dummy_meta = SubscriptionMeta {name: String::from("Test Subscription")};
+        let dummy_meta = SubscriptionMeta {
+            name: String::from("Test Subscription"),
+        };
         let mut dummy_subscription = Subscription::new(dummy_meta.clone()).unwrap();
-        
-        assert_eq!(dummy_subscription.metadata, serde_json::to_vec(&dummy_meta).unwrap());
-        
+
+        assert_eq!(
+            dummy_subscription.metadata,
+            serde_json::to_vec(&dummy_meta).unwrap()
+        );
+
         dummy_subscription.handle_subscribers(&dummy_client, 0);
         assert_eq!(dummy_subscription.subscribers[0], dummy_client);
-        
+
         dummy_subscription.handle_subscribers(&dummy_client, 1);
         assert_eq!(dummy_subscription.subscribers, Vec::<ClientID>::new())
     }
@@ -128,7 +128,10 @@ pub mod tests {
     #[test]
     fn test_subscriptions() {
         let mut subscriptions = Subscriptions::new();
-        let subscription = Subscription::new(SubscriptionMeta {name: "Test".to_owned()}).unwrap();
+        let subscription = Subscription::new(SubscriptionMeta {
+            name: "Test".to_owned(),
+        })
+        .unwrap();
         subscriptions.update(&subscription);
         let fetched_subscription = subscriptions.fetch(&subscription.id).unwrap().to_owned();
         assert_eq!(fetched_subscription, subscription);

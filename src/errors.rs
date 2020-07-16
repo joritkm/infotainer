@@ -1,5 +1,5 @@
-use uuid::Error;
 use serde::{Deserialize, Serialize};
+use uuid;
 
 /// This is messy and for now holds arbitrary custom errors.
 #[derive(Debug, Fail, PartialEq, Clone, Serialize, Deserialize)]
@@ -21,7 +21,7 @@ pub enum ClientError {
 
     #[fail(display = "Unable to parse provided input data: {}", _0)]
     InvalidInput(String),
-    
+
     #[fail(display = "Error during publication delivery: {}", _0)]
     PublishingError(String),
 }

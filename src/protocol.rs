@@ -48,13 +48,21 @@ impl TryFrom<&str> for ClientRequest {
             .take(256)
             .collect();
         match req_type.as_str() {
-            "get" => Ok(ClientRequest::Get { param: Uuid::parse_str(&req_arg)? }),
-            "add" => Ok(ClientRequest::Add { param: Uuid::parse_str(&req_arg)? }),
-            "remove" => Ok(ClientRequest::Remove { param: Uuid::parse_str(&req_arg)? }),
+            "get" => Ok(ClientRequest::Get {
+                param: Uuid::parse_str(&req_arg)?,
+            }),
+            "add" => Ok(ClientRequest::Add {
+                param: Uuid::parse_str(&req_arg)?,
+            }),
+            "remove" => Ok(ClientRequest::Remove {
+                param: Uuid::parse_str(&req_arg)?,
+            }),
             "publish" => Ok({
                 let sub_id = Uuid::parse_str(&req_arg[..36])?;
                 let data: Publication = serde_json::from_str(&req_arg[36..])?;
-                ClientRequest::Publish { param: (sub_id, data) }
+                ClientRequest::Publish {
+                    param: (sub_id, data),
+                }
             }),
             _ => Err(ClientError::UnknownType(String::from(raw))),
         }
@@ -126,7 +134,7 @@ impl TryFrom<&str> for ClientMessage {
                 "No valid request found in message",
             )))?;
         let id = ClientID::try_from(msg_id)
-            .map_err(|e| ClientError::MissingIdentification(String::from("Could not parse ID")))?;
+            .map_err(|_e| ClientError::MissingIdentification(String::from("Could not parse ID")))?;
         let request = ClientRequest::try_from(msg_req)?;
         Ok(ClientMessage {
             id: id,
