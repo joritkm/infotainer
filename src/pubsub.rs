@@ -78,6 +78,19 @@ impl Handler<ClientMessage> for PubSubServer {
     ///Implements processing of `ClientMessage`s for the `PubSubServer` actor
     fn handle(&mut self, msg: ClientMessage, _: &mut Context<Self>) -> Result<(), ClientError> {
         match msg.req {
+            ClientRequest::List => {
+                let sub_index_publication =
+                    Publication::new(&serde_json::to_string_pretty(&self.subs.index())?);
+                self.sessions
+                    .get(&msg.id.id())
+                    .ok_or(ClientError::InvalidInput(String::from("Invalid ClientID")))?
+                    .do_send(sub_index_publication)
+                    .map_err(|_e| {
+                        ClientError::PublishingError(String::from(
+                            "Failed sending subscription index",
+                        ))
+                    })
+            }
             ClientRequest::Add { param } => match self.subs.fetch(&param) {
                 Ok(mut s) => Ok(s.handle_subscribers(&msg.id, 0)),
                 Err(e) => {

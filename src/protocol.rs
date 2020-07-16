@@ -11,6 +11,8 @@ use crate::pubsub::Publication;
 /// Represents a requested task from a connected client
 #[derive(Debug, PartialEq, Clone)]
 pub enum ClientRequest {
+    /// List all currently available subscriptions
+    List,
     /// Get information on a specific subscription
     Get { param: Uuid },
     /// Add client to a Subscription, creating it, if it doesn't exist
@@ -48,6 +50,7 @@ impl TryFrom<&str> for ClientRequest {
             .take(256)
             .collect();
         match req_type.as_str() {
+            "list" => Ok(ClientRequest::List),
             "get" => Ok(ClientRequest::Get {
                 param: Uuid::parse_str(&req_arg)?,
             }),
