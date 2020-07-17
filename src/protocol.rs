@@ -164,11 +164,15 @@ pub mod tests {
         let publication = Publication::new(&"Test publication".to_owned());
         let publication_string = serde_json::to_string(&publication).unwrap();
         let dummy_subscription_id = Uuid::new_v4();
-        let get = ClientMessage::try_from(format!("{}|get::{}", client_id, dummy_subscription_id).as_str()).unwrap();
+        let get = ClientMessage::try_from(
+            format!("{}|get::{}", client_id, dummy_subscription_id).as_str(),
+        )
+        .unwrap();
         let list = ClientMessage::try_from(format!("{}|list::", client_id).as_str()).unwrap();
-        let add =
-            ClientMessage::try_from(format!("{}|add::{}", client_id, dummy_subscription_id).as_str())
-                .unwrap();
+        let add = ClientMessage::try_from(
+            format!("{}|add::{}", client_id, dummy_subscription_id).as_str(),
+        )
+        .unwrap();
         let remove = ClientMessage::try_from(
             format!("{}|remove::{}", client_id, dummy_subscription_id).as_str(),
         )

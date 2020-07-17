@@ -96,7 +96,7 @@ impl Handler<ClientMessage> for PubSubServer {
                 Err(e) => {
                     info!("{} :: Creating new subscription.", e);
                     let new_sub_meta = SubscriptionMeta {
-                        name: format!("{}", msg.id),
+                        name: format!("{}", param),
                     };
                     let new_sub = Subscription::new(new_sub_meta)?;
                     Ok(self.subs.update(&new_sub))
@@ -129,5 +129,22 @@ impl Handler<ClientMessage> for PubSubServer {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+
+    #[test]
+    fn test_publication() {
+        let test_pub = Publication::new(&String::from("test"));
+        assert_eq!(
+            Publication {
+                id: Uuid::from(test_pub.id),
+                data: String::from("test")
+            },
+            test_pub
+        );
     }
 }
