@@ -28,12 +28,12 @@ pub enum ClientError {
 
 impl From<serde_json::Error> for ClientError {
     fn from(e: serde_json::Error) -> ClientError {
-        ClientError::InvalidInput(format!("{}", e))
+        ClientError::InvalidInput(format!("SERDE: {}", e))
     }
 }
 
 impl From<uuid::Error> for ClientError {
     fn from(e: uuid::Error) -> ClientError {
-        ClientError::InvalidInput(format!("{}", e))
+        ClientError::InvalidInput(format!("UUID: {}", e))
     }
 }

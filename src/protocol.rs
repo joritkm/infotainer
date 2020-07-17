@@ -46,7 +46,6 @@ impl TryFrom<&str> for ClientRequest {
                 "Request Argument",
             )))?
             .chars()
-            .filter(|c| c.is_alphanumeric())
             .take(256)
             .collect();
         match req_type.as_str() {
@@ -143,5 +142,87 @@ impl TryFrom<&str> for ClientMessage {
             id: id,
             req: request,
         })
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+
+    #[test]
+    fn test_client_id() {
+        let id = Uuid::new_v4();
+        let id_string = format!("{}", id.to_simple());
+        let client_id_uuid = ClientID::from(id);
+        let client_id_string: String = format!("{}", client_id_uuid);
+        assert_eq!(id_string, client_id_string);
+    }
+
+    #[test]
+    fn test_message_protocol() {
+        let client_id = ClientID::from(Uuid::new_v4());
+        let publication = Publication::new(&"Test publication".to_owned());
+        let publication_string = serde_json::to_string(&publication).unwrap();
+        let dummy_subscription_id = Uuid::new_v4();
+        let get = ClientMessage::try_from(format!("{}|get::{}", client_id, dummy_subscription_id).as_str()).unwrap();
+        let list = ClientMessage::try_from(format!("{}|list::", client_id).as_str()).unwrap();
+        let add =
+            ClientMessage::try_from(format!("{}|add::{}", client_id, dummy_subscription_id).as_str())
+                .unwrap();
+        let remove = ClientMessage::try_from(
+            format!("{}|remove::{}", client_id, dummy_subscription_id).as_str(),
+        )
+        .unwrap();
+        let publish = ClientMessage::try_from(
+            format!(
+                "{}|publish::{}{}",
+                client_id, dummy_subscription_id, publication_string
+            )
+            .as_str(),
+        )
+        .unwrap();
+        assert_eq!(
+            get,
+            ClientMessage {
+                id: client_id.clone(),
+                req: ClientRequest::Get {
+                    param: dummy_subscription_id
+                }
+            }
+        );
+        assert_eq!(
+            add,
+            ClientMessage {
+                id: client_id.clone(),
+                req: ClientRequest::Add {
+                    param: dummy_subscription_id
+                }
+            }
+        );
+        assert_eq!(
+            remove,
+            ClientMessage {
+                id: client_id.clone(),
+                req: ClientRequest::Remove {
+                    param: dummy_subscription_id
+                }
+            }
+        );
+        assert_eq!(
+            list,
+            ClientMessage {
+                id: client_id.clone(),
+                req: ClientRequest::List
+            }
+        );
+        assert_eq!(
+            publish,
+            ClientMessage {
+                id: client_id.clone(),
+                req: ClientRequest::Publish {
+                    param: (dummy_subscription_id, publication)
+                }
+            }
+        );
     }
 }

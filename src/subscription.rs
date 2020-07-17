@@ -18,15 +18,14 @@ pub struct SubscriptionMeta {
 pub struct Subscription {
     /// Identifier
     pub id: Uuid,
-    /// An array representation of a serialized `crate::subscription::SubscriptionMeta`
+    /// An array representation of a serialized `SubscriptionMeta`
     pub metadata: Vec<u8>,
     /// The list of currently subscribed clients
     pub subscribers: Vec<ClientID>,
 }
 
 impl Subscription {
-    /// Performs serialization of `crate::subscription::SubscriptionMeta` and
-    /// creates `crate::subscription::Subscription`
+    /// Performs serialization of `SubscriptionMeta` and creates a new `Subscription`
     pub fn new(meta: SubscriptionMeta) -> Result<Subscription, ClientError> {
         let meta_vec = serde_json::to_vec(&meta)?;
         Ok(Subscription {
