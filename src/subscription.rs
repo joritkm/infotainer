@@ -16,23 +16,25 @@ pub struct SubscriptionMeta {
 /// Represents an entry in `crate::subscription::Subscriptions`
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct Subscription {
-    /// Identifier
+    /// Identifier, corresponds to the id of the creating client
     pub id: Uuid,
-    /// An array representation of a serialized `SubscriptionMeta`
-    pub metadata: Vec<u8>,
-    /// The list of currently subscribed clients
+    /// Metadata represented by `SubscriptionMeta`
+    pub metadata: SubscriptionMeta,
+    /// List of currently subscribed clients
     pub subscribers: Vec<ClientID>,
 }
 
 impl Subscription {
-    /// Performs serialization of `SubscriptionMeta` and creates a new `Subscription`
-    pub fn new(meta: SubscriptionMeta) -> Result<Subscription, ClientError> {
-        let meta_vec = serde_json::to_vec(&meta)?;
-        Ok(Subscription {
-            id: Uuid::new_v4(),
+    /// Generates metadata and creates a new `Subscription`
+    pub fn new(id: &Uuid, name: &str) -> Subscription {
+        let meta_vec = SubscriptionMeta {
+            name: name.to_owned(),
+        };
+        Subscription {
+            id: id.to_owned(),
             metadata: meta_vec,
             subscribers: Vec::new(),
-        })
+        }
     }
 
     /// Appends a new subscriber to the subscribers Array
@@ -102,35 +104,29 @@ impl Subscriptions {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use serde_json;
 
     #[test]
     fn test_subscription() {
         let dummy_client = ClientID::from(Uuid::new_v4());
-        let dummy_meta = SubscriptionMeta {
-            name: String::from("Test Subscription"),
-        };
-        let mut dummy_subscription = Subscription::new(dummy_meta.clone()).unwrap();
+        let mut dummy_subscription = Subscription::new(&dummy_client.id(), "Test Subscription");
 
         assert_eq!(
             dummy_subscription.metadata,
-            serde_json::to_vec(&dummy_meta).unwrap()
+            SubscriptionMeta {
+                name: String::from("Test Subscription")
+            }
         );
 
-        dummy_subscription.handle_subscribers(&dummy_client, 0);
-        assert_eq!(dummy_subscription.subscribers[0], dummy_client);
-
-        dummy_subscription.handle_subscribers(&dummy_client, 1);
-        assert_eq!(dummy_subscription.subscribers, Vec::<ClientID>::new())
+        let id_add = dummy_subscription.handle_subscribers(&dummy_client, 0);
+        assert!(dummy_subscription.subscribers.contains(&dummy_client));
+        let id_rem = dummy_subscription.handle_subscribers(&dummy_client, 1);
+        assert_eq!(dummy_subscription.subscribers.contains(&dummy_client), false);
     }
 
     #[test]
     fn test_subscriptions() {
         let mut subscriptions = Subscriptions::new();
-        let subscription = Subscription::new(SubscriptionMeta {
-            name: "Test".to_owned(),
-        })
-        .unwrap();
+        let subscription = Subscription::new(&Uuid::new_v4(), "Test Subscription");
         subscriptions.update(&subscription);
         let fetched_subscription = subscriptions.fetch(&subscription.id).unwrap().to_owned();
         assert_eq!(fetched_subscription, subscription);
