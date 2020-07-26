@@ -1,0 +1,10 @@
+#view {
+    background: #d3d3d3;
+    font-family: monospace;
+    border: 1px solid;
+    height: auto;
+    overflow: scroll;
+    min-height: 140px;
+    min-width: 720px;
+    padding: 2px;
+}

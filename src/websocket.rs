@@ -1,11 +1,15 @@
+use std::convert::TryFrom;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
-use actix::prelude::{Addr, AsyncContext, StreamHandler};
+use actix::prelude::{Addr, AsyncContext, Handler, Running, StreamHandler};
 use actix::{Actor, ActorContext};
 use actix_web_actors::ws;
 
-use crate::protocol::{ClientID, ClientMessage};
+use crate::errors::ClientError;
+use crate::protocol::{
+    ClientDisconnect, ClientID, ClientJoin, ClientMessage, ServerMessage, ServerMessageData,
+};
 use crate::pubsub::PubSubServer;
 use crate::subscription::Subscription;
 
@@ -13,6 +17,7 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 
 ///Run websocket via actor, track alivenes of clients
+#[derive(Debug, PartialEq, Clone)]
 pub struct WebSocketSession {
     id: ClientID,
     hb: Instant,
@@ -29,9 +34,7 @@ impl WebSocketSession {
             broker: pubsub_server.clone(),
         }
     }
-}
 
-impl WebSocketSession {
     fn beat(&self, ctx: &mut <Self as Actor>::Context) {
         ctx.run_interval(HEARTBEAT_INTERVAL, |act, ctx| {
             if Instant::now().duration_since(act.hb) > CLIENT_TIMEOUT {
@@ -47,10 +50,35 @@ impl WebSocketSession {
 impl Actor for WebSocketSession {
     type Context = ws::WebsocketContext<Self>;
 
-    ///On start of actor begin monitoring heartbeat
+    /// On start of actor begin monitoring heartbeat and create
+    /// a session on the `PubSubServer`
     fn started(&mut self, ctx: &mut Self::Context) {
-        debug!("New connection established.");
+        info!("Starting WebSocketSession for {}", self.id);
         self.beat(ctx);
+        let addr = ctx.address();
+        self.broker.do_send(ClientJoin {
+            id: self.id,
+            addr: addr,
+        });
+    }
+
+    fn stopping(&mut self, _: &mut Self::Context) -> Running {
+        info!("Stopping WebSocketSession for {}", self.id);
+        self.broker.do_send(ClientDisconnect { id: self.id });
+        Running::Stop
+    }
+}
+
+impl Handler<ServerMessage<ServerMessageData>> for WebSocketSession {
+    type Result = Result<(), ClientError>;
+
+    fn handle(
+        &mut self,
+        msg: ServerMessage<ServerMessageData>,
+        ctx: &mut Self::Context,
+    ) -> Result<(), ClientError> {
+        debug!("Received {} for {}", serde_json::to_string_pretty(&msg)?, self.id);
+        Ok(ctx.text(serde_json::to_string(&msg)?))
     }
 }
 
@@ -59,7 +87,21 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
         match msg {
             Ok(ws::Message::Text(msg)) => {
                 self.hb = Instant::now();
-                debug!("Message received: {:?}", &msg);
+                info!("Received Message from {}", self.id);
+                match ClientMessage::try_from(msg.as_str()) {
+                    Ok(client_message) => {
+                        trace!("Message received: {:#?}", &client_message);
+                        self.broker.do_send(client_message)
+                    }
+                    Err(e) => {
+                        error!("{}", &e);
+                        ctx.text(format!("Could not parse message {}", &msg))
+                    }
+                }
+            }
+            Ok(ws::Message::Binary(_msg)) => {
+                self.hb = Instant::now();
+                ctx.binary(format!("Unexpected binary data received"))
             }
             Ok(ws::Message::Ping(msg)) => {
                 self.hb = Instant::now();

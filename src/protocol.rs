@@ -1,14 +1,67 @@
 use std::convert::TryFrom;
 use std::fmt;
 
-use actix::prelude::Message;
+use actix::prelude::{Addr, Message};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::errors::ClientError;
-use crate::pubsub::Publication;
+use crate::websocket::WebSocketSession;
 
-/// Represents a requested task from a connected client
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub enum ServerMessageData {
+    Publication { id: Uuid, data: String },
+    Response { data: String },
+}
+
+impl From<&ClientSubmission> for ServerMessageData {
+    fn from(submission: &ClientSubmission) -> ServerMessageData {
+        ServerMessageData::Publication {
+            id: submission.id.clone(),
+            data: submission.data.to_owned(),
+        }
+    }
+}
+
+impl From<&String> for ServerMessageData {
+    fn from(message: &String) -> ServerMessageData {
+        ServerMessageData::Response {
+            data: message.to_owned(),
+        }
+    }
+}
+
+/// Represents a message sent by the server to a connected client
+#[derive(Debug, PartialEq, Clone, Message, Serialize, Deserialize)]
+#[rtype(result = "Result<(), ClientError>")]
+pub struct ServerMessage<T>
+where
+    T: Serialize,
+{
+    pub content: T,
+}
+
+#[derive(Debug, PartialEq, Clone, Message)]
+#[rtype("()")]
+pub struct ClientJoin {
+    pub id: ClientID,
+    pub addr: Addr<WebSocketSession>,
+}
+
+#[derive(Debug, PartialEq, Clone, Message)]
+#[rtype("()")]
+pub struct ClientDisconnect {
+    pub id: ClientID,
+}
+
+///Represents client data intended for publication
+#[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
+pub struct ClientSubmission {
+    pub id: Uuid,
+    pub data: String,
+}
+
+/// Represents a command from a connected client
 #[derive(Debug, PartialEq, Clone)]
 pub enum ClientRequest {
     /// List all currently available subscriptions
@@ -21,7 +74,7 @@ pub enum ClientRequest {
     /// was created by client
     Remove { param: Uuid },
     /// Publish a new message to subscribed clients
-    Publish { param: (Uuid, Publication) },
+    Publish { param: ClientSubmission },
 }
 
 impl TryFrom<&str> for ClientRequest {
@@ -60,11 +113,8 @@ impl TryFrom<&str> for ClientRequest {
                 param: Uuid::parse_str(&req_arg)?,
             }),
             "publish" => Ok({
-                let sub_id = Uuid::parse_str(&req_arg[..36])?;
-                let data: Publication = serde_json::from_str(&req_arg[36..])?;
-                ClientRequest::Publish {
-                    param: (sub_id, data),
-                }
+                let data: ClientSubmission = serde_json::from_str(&req_arg)?;
+                ClientRequest::Publish { param: data }
             }),
             _ => Err(ClientError::UnknownType(String::from(raw))),
         }
@@ -72,7 +122,7 @@ impl TryFrom<&str> for ClientRequest {
 }
 
 /// Representing a client identified by its uuid
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub struct ClientID {
     uid: Uuid,
 }
@@ -111,7 +161,7 @@ impl fmt::Display for ClientID {
 /// Represents a message from a connected client,
 /// including the clients identifying uuid and a request
 #[derive(Debug, PartialEq, Clone, Message)]
-#[rtype(result = "Result<(),ClientError>")]
+#[rtype(result = "Result<(), ClientError>")]
 pub struct ClientMessage {
     pub id: ClientID,
     pub req: ClientRequest,
@@ -161,9 +211,12 @@ pub mod tests {
     #[test]
     fn test_message_protocol() {
         let client_id = ClientID::from(Uuid::new_v4());
-        let publication = Publication::new(&"Test publication".to_owned());
-        let publication_string = serde_json::to_string(&publication).unwrap();
         let dummy_subscription_id = Uuid::new_v4();
+        let submission = ClientSubmission {
+            id: dummy_subscription_id,
+            data: "Test publication".to_owned(),
+        };
+        let submission_string = serde_json::to_string(&submission).unwrap();
         let get = ClientMessage::try_from(
             format!("{}|get::{}", client_id, dummy_subscription_id).as_str(),
         )
@@ -178,11 +231,7 @@ pub mod tests {
         )
         .unwrap();
         let publish = ClientMessage::try_from(
-            format!(
-                "{}|publish::{}{}",
-                client_id, dummy_subscription_id, publication_string
-            )
-            .as_str(),
+            format!("{}|publish::{}", client_id, submission_string).as_str(),
         )
         .unwrap();
         assert_eq!(
@@ -223,9 +272,7 @@ pub mod tests {
             publish,
             ClientMessage {
                 id: client_id.clone(),
-                req: ClientRequest::Publish {
-                    param: (dummy_subscription_id, publication)
-                }
+                req: ClientRequest::Publish { param: submission }
             }
         );
     }

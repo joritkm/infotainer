@@ -18,19 +18,15 @@
   <div id="content">
     <div id="clientSession" class="displays">
       <h4>Current Session Status</h4>
-      <span id="clientSessionStatus">Not connected</span>
+      <span id="clientSessionStatus" style="width: 75px;">Not connected</span>
+      <button id="connectionButton" onclick="connect()">Connect</button>
     </div>
     <div class="controls">
       <div class="messages">
         <h4>Messages</h4>
+        <div id="view"></div>
         <input type=text id="get" />
-        <button onclick="socket_send('get')">Send</button>
-      </div>
-      <div class="subscriptions">
-        <h4>Available Subscriptions</h4>
-        <select id="add" name="subscription">
-        </select>
-        <button onclick="socket_send('add')">Subscribe</button>
+        <button onclick="socket_send()">Send</button>
       </div>
     </div>
   </div>

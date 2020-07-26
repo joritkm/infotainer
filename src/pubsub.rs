@@ -1,40 +1,24 @@
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use actix::prelude::{Actor, Context, Handler, Message, Recipient};
+use actix::prelude::{Actor, Context, Handler, Recipient};
 
 use crate::errors::ClientError;
-use crate::protocol::{ClientMessage, ClientRequest};
+use crate::protocol::{
+    ClientDisconnect, ClientJoin, ClientMessage, ClientRequest, ClientSubmission, ServerMessage,
+    ServerMessageData,
+};
 use crate::subscription::{Subscription, Subscriptions};
 
-#[derive(Debug, PartialEq, Clone, Deserialize, Serialize, Message)]
-#[rtype(result = "()")]
-///Represents messages received and sent through `PubSubServer`
-pub struct Publication {
-    id: Uuid,
-    data: String,
-}
-
-impl Publication {
-    ///Creates a new `Publication` with a unique ID
-    pub fn new(data: &String) -> Publication {
-        Publication {
-            id: Uuid::new_v4(),
-            data: String::from(data),
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Clone)]
 /// The actor managing `Subscriptions` and handling dissemination of `Publication`s.
 /// Holds a list of currently connected sessions and a `Subscription` store.
+#[derive(Debug, PartialEq, Clone)]
 pub struct PubSubServer {
     /// The subscription store
     subs: Subscriptions,
     /// Sessions are represented by the uid of a `ClientID` and
     /// a clients `WebSocketSession` address
-    sessions: HashMap<Uuid, Recipient<Publication>>,
+    sessions: HashMap<Uuid, Recipient<ServerMessage<ServerMessageData>>>,
 }
 
 impl PubSubServer {
@@ -47,21 +31,40 @@ impl PubSubServer {
         })
     }
 
-    /// Sends a `Publication` to all subscribers of a `Subscription`
-    fn publish(&self, sub_id: &Uuid, p: &Publication) -> Result<Vec<String>, ClientError> {
-        match self.subs.fetch(sub_id) {
+    /// Sends a `ServerMessageData::Response` to a connected client
+    fn send_message(&self, client_id: Uuid, msg: &str) {
+        debug!("Attempting to send message {} to {}", msg, client_id);
+        if let Some(session) = self.sessions.get(&client_id) {
+            let msg = ServerMessage {
+                content: ServerMessageData::from(&msg.to_owned()),
+            };
+            session.do_send(msg).ok();
+        } else {
+            info!("Could not send message to {}. The session could not be found.", client_id)
+        }
+    }
+
+    /// Publishes a `ClientSubmission` to all subscribers of a `Subscription`
+    fn publish(&self, submission: &ClientSubmission) -> Result<Vec<String>, ClientError> {
+        match self.subs.fetch(&submission.id) {
             Ok(sub) => {
-                let res = sub.subscribers.iter().map(|s| {
-                    match self.sessions.get(&s.id()) {
+                let publication = ServerMessageData::from(submission);
+                let message = ServerMessage {
+                    content: publication,
+                };
+                info!("Distributing new publication for subscription {}", sub.id);
+                let res = sub
+                    .subscribers
+                    .iter()
+                    .map(|s| match self.sessions.get(&s.id()) {
                         Some(recipient) => {
-                            recipient.do_send(p.clone()).unwrap();
+                            recipient.do_send(message.clone()).unwrap();
+                            debug!("Publication sent to {}", &s);
                             format!("{}", &s.id().to_hyphenated())
-                        },
-                        _ => {
-                            format!("No session found for ClientID: {}", &s.id())
                         }
-                    }
-                }).collect();
+                        _ => format!("No session found for ClientID: {}", &s.id()),
+                    })
+                    .collect();
                 Ok(res)
             }
             Err(e) => Err(ClientError::InvalidInput(format!("{}", e))),
@@ -73,6 +76,26 @@ impl Actor for PubSubServer {
     type Context = Context<Self>;
 }
 
+impl Handler<ClientJoin> for PubSubServer {
+    type Result = ();
+
+    fn handle(&mut self, join: ClientJoin, _: &mut Context<Self>) {
+        self.sessions.insert(
+            join.id.id(),
+            join.addr.recipient::<ServerMessage<ServerMessageData>>(),
+        );
+        self.send_message(join.id.id(), format!("{}", join.id).as_str())
+    }
+}
+
+impl Handler<ClientDisconnect> for PubSubServer {
+    type Result = ();
+
+    fn handle(&mut self, disco: ClientDisconnect, _: &mut Context<Self>) {
+        self.sessions.remove(&disco.id.id());
+    }
+}
+
 impl Handler<ClientMessage> for PubSubServer {
     type Result = Result<(), ClientError>;
 
@@ -80,57 +103,39 @@ impl Handler<ClientMessage> for PubSubServer {
     fn handle(&mut self, msg: ClientMessage, _: &mut Context<Self>) -> Result<(), ClientError> {
         match msg.req {
             ClientRequest::List => {
-                let sub_index_publication =
-                    Publication::new(&serde_json::to_string_pretty(&self.subs.index())?);
-                self.sessions
-                    .get(&msg.id.id())
-                    .ok_or(ClientError::InvalidInput(String::from("ClientID not found in sessions")))?
-                    .do_send(sub_index_publication)
-                    .map_err(|_e| {
-                        ClientError::PublishingError(String::from(
-                            "Failed sending subscription index",
-                        ))
-                    })
-            }
-            ClientRequest::Add { param } => match self.subs.fetch(&param) {
-                Ok(mut s) => Ok(s.handle_subscribers(&msg.id, 0)),
-                Err(e) => {
-                    info!("{} :: Creating new subscription.", e);
-                    let mut new_sub =
-                        Subscription::new(&msg.id.id(), &format!("{}", param.to_simple()));
-                    new_sub.handle_subscribers(&msg.id, 0);
-                    Ok(self.subs.update(&new_sub))
-
+                debug!("Handling ClientRequest::List for {}", msg.id);
+                Ok(self.send_message(
+                    msg.id.id(),
+                    &serde_json::to_string_pretty(&self.subs.index())?,
+                ))
+            },
+            ClientRequest::Add { param } => {
+                debug!("Handling ClientRequest::Add for {} with param {}", msg.id, param);
+                match self.subs.fetch(&param) {
+                    Ok(mut s) => {
+                        s.handle_subscribers(&msg.id, 0);
+                        Ok(self.subs.update(&s))
+                    },
+                    Err(e) => {
+                        info!("{} :: Creating new subscription.", e);
+                        let mut new_sub = Subscription::new(&param, format!("{}", msg.id).as_str());
+                        new_sub.handle_subscribers(&msg.id, 0);
+                        Ok(self.subs.update(&new_sub))
+                    }
                 }
             },
             ClientRequest::Get { param } => {
+                debug!("Handling ClientRequest::Get for {} with param {}", msg.id, param);
                 let s = self.subs.fetch(&param)?;
-                let subscription_info = Publication::new(&serde_json::to_string_pretty(&s)?);
-                self.sessions
-                    .get(&msg.id.id())
-                    .ok_or(ClientError::InvalidInput(String::from("ClientID not found in sessions")))?
-                    .do_send(subscription_info)
-                    .map_err(|_e| {
-                        ClientError::PublishingError(String::from(
-                            "Failed sending requested Subscription",
-                        ))
-                    })
+                Ok(self.send_message(msg.id.id(), &serde_json::to_string_pretty(&s)?))
             }
             ClientRequest::Publish { param } => {
-                let s = self.subs.fetch(&param.0)?;
-                let res = self.publish(&s.id, &param.1)?;
-                let publication_result = Publication::new(&serde_json::to_string(&res)?);
-                self.sessions
-                    .get(&msg.id.id())
-                    .ok_or(ClientError::InvalidInput(String::from("ClientID not found in sessions")))?
-                    .do_send(publication_result)
-                    .map_err(|_e| {
-                        ClientError::PublishingError(String::from(
-                            "Failed sending publication result",
-                        ))
-                    })
+                debug!("Handling ClientRequest::Publish for {} with param {:#?}", msg.id, param);
+                let res = self.publish(&param)?;
+                Ok(self.send_message(msg.id.id(), &serde_json::to_string(&res)?))
             }
             ClientRequest::Remove { param } => {
+                debug!("Handling ClientRequest::Remove for {} with param {}", msg.id, param);
                 Ok(self.subs.remove(&param))
             },
         }
@@ -140,19 +145,18 @@ impl Handler<ClientMessage> for PubSubServer {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use std::convert::TryFrom;
     use crate::protocol::ClientID;
+    use std::convert::TryFrom;
 
     #[test]
-    fn test_publication() {
-        let test_pub = Publication::new(&String::from("test"));
-        assert_eq!(
-            Publication {
-                id: Uuid::from(test_pub.id),
-                data: String::from("test")
-            },
-            test_pub
-        );
+    fn test_submitting_publication() {
+        let mut server = PubSubServer::new().unwrap();
+        let sub_id = Uuid::new_v4();
+        let subscription = Subscription::new(&sub_id, "Test");
+        server.subs.update(&subscription);
+        let dummy_submission = ClientSubmission {id: sub_id, data: "Test".to_owned()};
+        let published = server.publish(&dummy_submission).unwrap();
+        assert_eq!(published, Vec::<String>::new())
     }
 
     #[actix_rt::test]
@@ -172,6 +176,6 @@ pub mod tests {
         let client_msg =
             ClientMessage::try_from(format!("{}|add::{}", &client_id, &sub_id).as_str()).unwrap();
         actor.do_send(client_msg);
-        sub.handle_subscribers(&ClientID::from(client_id) , 0);
+        sub.handle_subscribers(&ClientID::from(client_id), 0);
     }
 }

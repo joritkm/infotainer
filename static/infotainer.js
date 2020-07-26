@@ -1,95 +1,53 @@
-const MAGICTOKEN = "magictoken"
-const TOKENURL = "http://localhost:8080/id";
 const SOCKETURL = "ws://localhost:8080/ws/"
-const ADD = "add";
-const GET = "get";
-const DEL = "remove";
-const DELIM = "::";
-const storage = window.sessionStorage;
-let searchfield = null;
-let subfield = null;
-let sessionStatusDisplay = null;
-let socket = null;
-
+let state = {
+  messages: [],
+  socket: null,
+  session: null,
+}
 
 function connect() {
   disconnect();
   console.log("Connecting...");
-  socket = new WebSocket(SOCKETURL);
+  state.socket = new WebSocket(SOCKETURL);
+  state.socket.onmessage = (e) => {
+    console.log(e.data);
+    if (! state.session) {
+      state.session = JSON.parse(e.data).content.Response.data
+      document.getElementById("clientSessionStatus").textContent = state.session;
+    } else {
+      state.messages.push(e.data)
+      document.getElementById("view").innerHTML += `<p>Server: ` + state.messages[state.messages.length-1] + "</p>";
+    }
+  }
+  state.socket.onclose = () => {
+    console.log("Disconnected.")
+    state.socket = null;
+    state.messages = [];
+    state.session = null;
+    document.getElementById("clientSessionStatus").textContent = "Not Connected";
+    document.getElementById("connectionButton").setAttribute("onclick", "connect()")
+    document.getElementById("connectionButton").textContent = "Connect"
+    document.getElementById("view").textContent = null
+  };
+  document.getElementById("connectionButton").setAttribute("onclick", "disconnect()")
+  document.getElementById("connectionButton").textContent = "Disconnect"
 }
 
 function disconnect() {
-  if (socket != null) {
+  if (state.socket != null) {
     console.log("Disconnecting...");
-    socket.onclose = function () {
-      console.log("Disconnected.")
-      socket = null;
-    };
+    state.socket.close()
   }
 }
 
-function sub_request(subscriptionID, del=false) {
-  if (!subscriptionID) {
-    subscriptionID = subfield.options[subfield.selectedIndex].value;
-  }
-  return del ? DEL : ADD + DELIM + subscriptionID
-}
-
-function get_request(_data) {
-  if (!_data) {
-    _data = searchfield.value;
-    searchfield.value = "";
-  }
-  return GET + DELIM + _data
-}
-
-function client_id() {
-  const session = JSON.parse(storage.getItem("clientSession"));
-  return session.client.uid;
-}
-
-function socket_send(_type, _data = null) {
-  let payload = null;
-  if (_type == GET) {
-    payload = get_request(_data);
-  } else if (_type == ADD) {
-    payload = sub_request(_data);
-  } else if (_type == DEL) {
-    payload = sub_request(_data, del=true)
-  } else {
-    throw _type + " is unknown"
-  }
-  payload = client_id() + "|" + payload;
-  if (socket == null) {
+function socket_send() {
+  if (state.socket == null) {
     throw "Not connected to a socket"
   }
+  valueField = document.getElementById("get")
+  const request = valueField.value
+  const payload = state.session + "|" + request
   console.log("Sending\t" + payload);
-  socket.send(payload);
+  state.socket.send(payload);
+  valueField.value = null
 }
-
-function setSessionStatus(clientSession) {
-  let sessionString = "ID: " + clientSession.client.uid;
-  console.log(sessionString);
-  sessionStatusDisplay.textContent = sessionString;
-}
-
-document.addEventListener("DOMContentLoaded", async function () {
-  searchfield = document.getElementById(GET);
-  subfield = document.getElementById(ADD);
-  sessionStatusDisplay = document.getElementById("clientSessionStatus");
-  if (!storage.getItem('clientSession')) {
-    let tokenResp = await fetch(TOKENURL, {
-      method: 'POST',
-      headers: {
-        'X-Auth-Token': MAGICTOKEN
-      }
-    });
-    const client = await tokenResp.json();
-    storage.setItem('clientSession', JSON.stringify(client));
-    setSessionStatus(client);
-  }
-  connect();
-  socket.onopen= function () {
-    socket_send(ADD, "datasets");
-  };
-});

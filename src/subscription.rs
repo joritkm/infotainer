@@ -120,7 +120,10 @@ pub mod tests {
         let id_add = dummy_subscription.handle_subscribers(&dummy_client, 0);
         assert!(dummy_subscription.subscribers.contains(&dummy_client));
         let id_rem = dummy_subscription.handle_subscribers(&dummy_client, 1);
-        assert_eq!(dummy_subscription.subscribers.contains(&dummy_client), false);
+        assert_eq!(
+            dummy_subscription.subscribers.contains(&dummy_client),
+            false
+        );
     }
 
     #[test]

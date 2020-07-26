@@ -53,23 +53,17 @@ async fn wsa(
     pubsub_server: web::Data<Addr<PubSubServer>>,
 ) -> Result<web::HttpResponse, error::Error> {
     let websocket_session = WebSocketSession::new(pubsub_server.get_ref());
-    let res = ws::start(websocket_session, &req, stream);
-    res
+    ws::start(websocket_session, &req, stream)
 }
 
 #[actix_rt::main]
 async fn main() -> std::io::Result<()> {
-    std::env::set_var(
-        "RUST_LOG",
-        "actix_server=info,actix_web=info,infotainer=debug",
-    );
     env_logger::init();
-    let pubsub_server = PubSubServer::new()
-        .expect("Could not initiate PubSub server.")
-        .start();
+    let pubsub_server = PubSubServer::new().expect("Could not initiate PubSub server.");
+    let addr = pubsub_server.start();
     HttpServer::new(move || {
         App::new()
-            .app_data(pubsub_server.clone())
+            .data(addr.clone())
             .wrap(middleware::Logger::default())
             .service(web::resource("/ws/").route(web::get().to(wsa)))
             .service(fs::Files::new("/", "static/").index_file("index.html"))
