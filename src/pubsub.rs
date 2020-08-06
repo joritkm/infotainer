@@ -40,7 +40,10 @@ impl PubSubServer {
             };
             session.do_send(msg).ok();
         } else {
-            info!("Could not send message to {}. The session could not be found.", client_id)
+            info!(
+                "Could not send message to {}. The session could not be found.",
+                client_id
+            )
         }
     }
 
@@ -101,43 +104,55 @@ impl Handler<ClientMessage> for PubSubServer {
 
     ///Implements processing of `ClientMessage`s for the `PubSubServer` actor
     fn handle(&mut self, msg: ClientMessage, _: &mut Context<Self>) -> Result<(), ClientError> {
-        match msg.req {
+        match msg.request {
             ClientRequest::List => {
                 debug!("Handling ClientRequest::List for {}", msg.id);
                 Ok(self.send_message(
                     msg.id.id(),
                     &serde_json::to_string_pretty(&self.subs.index())?,
                 ))
-            },
+            }
             ClientRequest::Add { param } => {
-                debug!("Handling ClientRequest::Add for {} with param {}", msg.id, param);
+                debug!(
+                    "Handling ClientRequest::Add for {} with param {}",
+                    msg.id, param
+                );
                 match self.subs.fetch(&param) {
                     Ok(mut s) => {
-                        s.handle_subscribers(&msg.id, 0);
+                        s.append_subscriber(&msg.id);
                         Ok(self.subs.update(&s))
-                    },
+                    }
                     Err(e) => {
                         info!("{} :: Creating new subscription.", e);
                         let mut new_sub = Subscription::new(&param, format!("{}", msg.id).as_str());
-                        new_sub.handle_subscribers(&msg.id, 0);
+                        new_sub.remove_subscriber(&msg.id);
                         Ok(self.subs.update(&new_sub))
                     }
                 }
-            },
+            }
             ClientRequest::Get { param } => {
-                debug!("Handling ClientRequest::Get for {} with param {}", msg.id, param);
+                debug!(
+                    "Handling ClientRequest::Get for {} with param {}",
+                    msg.id, param
+                );
                 let s = self.subs.fetch(&param)?;
                 Ok(self.send_message(msg.id.id(), &serde_json::to_string_pretty(&s)?))
             }
             ClientRequest::Publish { param } => {
-                debug!("Handling ClientRequest::Publish for {} with param {:#?}", msg.id, param);
+                debug!(
+                    "Handling ClientRequest::Publish for {} with param {:#?}",
+                    msg.id, param
+                );
                 let res = self.publish(&param)?;
                 Ok(self.send_message(msg.id.id(), &serde_json::to_string(&res)?))
             }
             ClientRequest::Remove { param } => {
-                debug!("Handling ClientRequest::Remove for {} with param {}", msg.id, param);
+                debug!(
+                    "Handling ClientRequest::Remove for {} with param {}",
+                    msg.id, param
+                );
                 Ok(self.subs.remove(&param))
-            },
+            }
         }
     }
 }
@@ -146,7 +161,6 @@ impl Handler<ClientMessage> for PubSubServer {
 pub mod tests {
     use super::*;
     use crate::protocol::ClientID;
-    use std::convert::TryFrom;
 
     #[test]
     fn test_submitting_publication() {
@@ -154,7 +168,10 @@ pub mod tests {
         let sub_id = Uuid::new_v4();
         let subscription = Subscription::new(&sub_id, "Test");
         server.subs.update(&subscription);
-        let dummy_submission = ClientSubmission {id: sub_id, data: "Test".to_owned()};
+        let dummy_submission = ClientSubmission {
+            id: sub_id,
+            data: "Test".to_owned(),
+        };
         let published = server.publish(&dummy_submission).unwrap();
         assert_eq!(published, Vec::<String>::new())
     }
@@ -172,10 +189,12 @@ pub mod tests {
         let actor = &server.start();
         let sub_id = Uuid::new_v4();
         let mut sub = Subscription::new(&sub_id, "Test Subscription");
-        let client_id = Uuid::new_v4();
-        let client_msg =
-            ClientMessage::try_from(format!("{}|add::{}", &client_id, &sub_id).as_str()).unwrap();
+        let client_id = ClientID::from(Uuid::new_v4());
+        let client_msg = ClientMessage {
+            id: client_id,
+            request: ClientRequest::Add { param: sub_id },
+        };
         actor.do_send(client_msg);
-        sub.handle_subscribers(&ClientID::from(client_id), 0);
+        sub.remove_subscriber(&ClientID::from(client_id));
     }
 }

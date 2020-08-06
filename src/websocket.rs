@@ -77,7 +77,11 @@ impl Handler<ServerMessage<ServerMessageData>> for WebSocketSession {
         msg: ServerMessage<ServerMessageData>,
         ctx: &mut Self::Context,
     ) -> Result<(), ClientError> {
-        debug!("Received {} for {}", serde_json::to_string_pretty(&msg)?, self.id);
+        debug!(
+            "Received {} for {}",
+            serde_json::to_string_pretty(&msg)?,
+            self.id
+        );
         Ok(ctx.text(serde_json::to_string(&msg)?))
     }
 }
