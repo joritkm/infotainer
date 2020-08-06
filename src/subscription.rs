@@ -38,24 +38,15 @@ impl Subscription {
     }
 
     /// Appends a new subscriber to the subscribers Array
-    fn append_subscriber(&mut self, subscriber: &ClientID) {
+    pub fn append_subscriber(&mut self, subscriber: &ClientID) {
         if !self.subscribers.contains(subscriber) {
             self.subscribers.push(subscriber.to_owned())
         }
     }
     /// Removes a subscriber from the subscribers Array
-    fn remove_subscriber(&mut self, subscriber: &ClientID) {
+    pub fn remove_subscriber(&mut self, subscriber: &ClientID) {
         if let Some(sub_index) = self.subscribers.iter().position(|s| s == subscriber) {
             self.subscribers.remove(sub_index);
-        }
-    }
-
-    /// Handles removal and addition of subscribers. Any non-zero value
-    /// for action will attempt to remove ClientID from subscribers.
-    pub fn handle_subscribers(&mut self, client: &ClientID, action: usize) {
-        match action {
-            0 => self.append_subscriber(client),
-            _ => self.remove_subscriber(client),
         }
     }
 }
@@ -117,9 +108,9 @@ pub mod tests {
             }
         );
 
-        let id_add = dummy_subscription.handle_subscribers(&dummy_client, 0);
+        dummy_subscription.append_subscriber(&dummy_client);
         assert!(dummy_subscription.subscribers.contains(&dummy_client));
-        let id_rem = dummy_subscription.handle_subscribers(&dummy_client, 1);
+        dummy_subscription.remove_subscriber(&dummy_client);
         assert_eq!(
             dummy_subscription.subscribers.contains(&dummy_client),
             false
