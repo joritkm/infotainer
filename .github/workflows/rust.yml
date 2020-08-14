@@ -7,11 +7,15 @@ on:
 env:
   CARGO_TERM_COLOR: always
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
-    - name: Build
-      run: cargo build --verbose
+    - name: Install tarpaulin
+      run: cargo install cargo-tarpaulin
     - name: Run tests
-      run: cargo test --verbose
+      run: cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out Xml
+    - name: Upload coverage stats
+      uses: codecov/codecov-action@v1
+      with:
+        fail_ci_if_error: true
