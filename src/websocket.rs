@@ -56,10 +56,15 @@ impl Actor for WebSocketSession {
         info!("Starting WebSocketSession for {}", self.id);
         self.beat(ctx);
         let addr = ctx.address();
-        self.broker.do_send(ClientJoin {
+        let join = ClientJoin {
             id: self.id,
             addr: addr,
-        });
+        };
+        if let Err(_) = self.broker.try_send(join) {
+            error!("WebSocketSession {} failed to join pubsub server.", self.id);
+            ctx.text("Error: Could not connect to pubsub-server.");
+            ctx.stop()
+        }
     }
 
     fn stopping(&mut self, _: &mut Self::Context) -> Running {
@@ -124,5 +129,18 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
                 ctx.stop()
             }
         }
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+
+    #[actix_rt::test]
+    async fn test_creating_websocket_session() {
+        let pubsub = PubSubServer::new().unwrap();
+        let pss = pubsub.clone().start();
+        let websocket = WebSocketSession::new(&pss);
+        assert_eq!(websocket.broker.connected(), true)
     }
 }

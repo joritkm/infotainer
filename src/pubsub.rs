@@ -5,8 +5,8 @@ use actix::prelude::{Actor, Context, Handler, Recipient};
 
 use crate::errors::ClientError;
 use crate::protocol::{
-    ClientDisconnect, ClientJoin, ClientMessage, ClientRequest, ClientSubmission, ServerMessage,
-    ServerMessageData,
+    ClientDisconnect, ClientJoin, ClientMessage, ClientRequest, ClientSubmission,
+    ServerMessage, ServerMessageData,
 };
 use crate::subscription::{Subscription, Subscriptions};
 
@@ -184,17 +184,39 @@ pub mod tests {
     }
 
     #[actix_rt::test]
-    async fn test_pubsub_add_remove() {
+    async fn test_pubsub_message_handler() {
         let server = PubSubServer::new().unwrap();
         let actor = &server.start();
         let sub_id = Uuid::new_v4();
-        let mut sub = Subscription::new(&sub_id, "Test Subscription");
         let client_id = ClientID::from(Uuid::new_v4());
-        let client_msg = ClientMessage {
+        let client_submission = ClientSubmission {
+            id: sub_id,
+            data: "Test".to_owned(),
+        };
+        let client_add_msg = ClientMessage {
             id: client_id,
             request: ClientRequest::Add { param: sub_id },
         };
-        actor.do_send(client_msg);
-        sub.remove_subscriber(&ClientID::from(client_id));
+        let client_list_msg = ClientMessage {
+            id: client_id,
+            request: ClientRequest::List,
+        };
+        let client_get_msg = ClientMessage {
+            id: client_id,
+            request: ClientRequest::Get { param: sub_id },
+        };
+        let client_publish_msg = ClientMessage {
+            id: client_id,
+            request: ClientRequest::Publish { param: client_submission },
+        };
+        let client_remove_msg = ClientMessage {
+            id: client_id,
+            request: ClientRequest::Remove { param: sub_id },
+        };
+        actor.try_send(client_add_msg).unwrap();
+        actor.try_send(client_list_msg).unwrap();
+        actor.try_send(client_get_msg).unwrap();
+        actor.try_send(client_publish_msg).unwrap();
+        actor.try_send(client_remove_msg).unwrap();
     }
 }
