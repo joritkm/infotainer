@@ -9,7 +9,9 @@ env:
 jobs:
   test:
     runs-on: ubuntu-latest
-    container: joppich/tarpaulin:latest
+    container: 
+      image: joppich/tarpaulin:latest
+      options: --security-opt seccomp=unconfined
     steps:
     - uses: actions/checkout@v2
     - name: Run tests
