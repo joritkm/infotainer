@@ -12,8 +12,6 @@ jobs:
     container: joppich/tarpaulin:latest
     steps:
     - uses: actions/checkout@v2
-    - name: Install tarpaulin
-      run: cargo install cargo-tarpaulin
     - name: Run tests
       run: cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out Xml
     - name: Upload coverage stats
