@@ -9,6 +9,7 @@ env:
 jobs:
   test:
     runs-on: ubuntu-latest
+    container: joppich/tarpaulin:latest
     steps:
     - uses: actions/checkout@v2
     - name: Install tarpaulin
