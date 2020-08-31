@@ -4,8 +4,13 @@ version = "0.1.0"
 authors = ["joppich <joppich@bricknet.de>"]
 edition = "2018"
 
+[lib]
+name = "infotainer"
+path = "src/lib.rs"
+
 [[bin]]
 name = "infotainer"
+path = "src/server.rs"
 
 [dependencies]
 log = "0.4.0"
