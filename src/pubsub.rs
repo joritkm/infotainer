@@ -5,8 +5,8 @@ use actix::prelude::{Actor, Context, Handler, Recipient};
 
 use crate::errors::ClientError;
 use crate::protocol::{
-    ClientDisconnect, ClientJoin, ClientMessage, ClientRequest, ClientSubmission,
-    ServerMessage, ServerMessageData,
+    ClientDisconnect, ClientJoin, ClientMessage, ClientRequest, ClientSubmission, ServerMessage,
+    ServerMessageData,
 };
 use crate::subscription::{Subscription, Subscriptions};
 
@@ -160,7 +160,6 @@ impl Handler<ClientMessage> for PubSubServer {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::protocol::ClientID;
 
     #[test]
     fn test_submitting_publication() {
@@ -176,47 +175,17 @@ pub mod tests {
         assert_eq!(published, Vec::<String>::new())
     }
 
-    #[actix_rt::test]
-    async fn test_pubsubserver_actor() {
+    #[test]
+    fn test_sending_server_message() {
         let server = PubSubServer::new().unwrap();
-        let actor = server.start();
-        assert_eq!(actor.connected(), true);
+        let dummy_client_id = Uuid::new_v4();
+        server.send_message(dummy_client_id, "Test");
     }
 
     #[actix_rt::test]
-    async fn test_pubsub_message_handler() {
-        let server = PubSubServer::new().unwrap();
-        let actor = &server.start();
-        let sub_id = Uuid::new_v4();
-        let client_id = ClientID::from(Uuid::new_v4());
-        let client_submission = ClientSubmission {
-            id: sub_id,
-            data: "Test".to_owned(),
-        };
-        let client_add_msg = ClientMessage {
-            id: client_id,
-            request: ClientRequest::Add { param: sub_id },
-        };
-        let client_list_msg = ClientMessage {
-            id: client_id,
-            request: ClientRequest::List,
-        };
-        let client_get_msg = ClientMessage {
-            id: client_id,
-            request: ClientRequest::Get { param: sub_id },
-        };
-        let client_publish_msg = ClientMessage {
-            id: client_id,
-            request: ClientRequest::Publish { param: client_submission },
-        };
-        let client_remove_msg = ClientMessage {
-            id: client_id,
-            request: ClientRequest::Remove { param: sub_id },
-        };
-        actor.try_send(client_add_msg).unwrap();
-        actor.try_send(client_list_msg).unwrap();
-        actor.try_send(client_get_msg).unwrap();
-        actor.try_send(client_publish_msg).unwrap();
-        actor.try_send(client_remove_msg).unwrap();
+    async fn test_start_pubsub() {
+        let dummy_server = PubSubServer::new().unwrap();
+        let pubsub = dummy_server.start();
+        assert_eq!(pubsub.connected(), true);
     }
 }

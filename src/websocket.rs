@@ -4,6 +4,7 @@ use uuid::Uuid;
 
 use actix::prelude::{Addr, AsyncContext, Handler, Running, StreamHandler};
 use actix::{Actor, ActorContext};
+use actix_web::{web, error};
 use actix_web_actors::ws;
 
 use crate::errors::ClientError;
@@ -15,6 +16,17 @@ use crate::subscription::Subscription;
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
+
+
+///Perform ws-handshake and create the socket.
+pub async fn wsa(
+    req: web::HttpRequest,
+    stream: web::Payload,
+    pubsub_server: web::Data<Addr<PubSubServer>>,
+) -> Result<web::HttpResponse, error::Error> {
+    let websocket_session = WebSocketSession::new(pubsub_server.get_ref());
+    ws::start(websocket_session, &req, stream)
+}
 
 ///Run websocket via actor, track alivenes of clients
 #[derive(Debug, PartialEq, Clone)]
