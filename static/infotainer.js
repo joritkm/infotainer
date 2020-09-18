@@ -15,8 +15,8 @@ function connect() {
       state.session = JSON.parse(e.data).content.Response.data
       document.getElementById("clientSessionStatus").textContent = state.session;
     } else {
-      state.messages.push(e.data)
-      document.getElementById("view").innerHTML += `<p>Server: ` + state.messages[state.messages.length-1] + "</p>";
+      state.messages.push(JSON.parse(e.data).content)
+      document.getElementById("view").innerHTML += `<p>Server: ` + JSON.stringify(state.messages[state.messages.length-1]) + "</p>";
     }
   }
   state.socket.onclose = () => {
@@ -44,10 +44,20 @@ function socket_send() {
   if (state.socket == null) {
     throw "Not connected to a socket"
   }
-  valueField = document.getElementById("get")
-  const request = valueField.value
-  const payload = state.session + "|" + request
+  const reqType = document.getElementById("typeInput").value
+  let reqValue = document.getElementById("valueInput").value
+  const reqID = {"uid": state.session}
+  let reqBody = null
+  console.log(reqType)
+  if (reqType == "List") {
+    reqBody = reqType
+  } else if (reqType == "Publish") {
+    reqBody = { [reqType] :{"param": {"id": reqValue, "data": "Test1312"}}} 
+  } else {
+    reqBody = { [reqType]: { "param": reqValue} }
+  }
+  const payload = JSON.stringify({ "id": reqID, "request": reqBody })
   console.log("Sending\t" + payload);
   state.socket.send(payload);
-  valueField.value = null
+  document.getElementById("valueInput").value = ""
 }

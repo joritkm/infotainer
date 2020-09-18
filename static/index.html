@@ -25,7 +25,14 @@
       <div class="messages">
         <h4>Messages</h4>
         <div id="view"></div>
-        <input type=text id="get" />
+        <select name="MessageType" id="typeInput">
+          <option value="Get">Get</option>
+          <option value="List">List</option>
+          <option value="Add">Add</option>
+          <option value="Remove">Remove</option>
+          <option value="Publish">Publish</option>
+        </select>
+        <input type=text id="valueInput" />
         <button onclick="socket_send()">Send</button>
       </div>
     </div>

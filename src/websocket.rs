@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use actix::prelude::{Addr, AsyncContext, Handler, Running, StreamHandler};
 use actix::{Actor, ActorContext};
-use actix_web::{web, error};
+use actix_web::{error, web};
 use actix_web_actors::ws;
 
 use crate::errors::ClientError;
@@ -16,7 +16,6 @@ use crate::subscription::Subscription;
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
-
 
 ///Perform ws-handshake and create the socket.
 pub async fn wsa(
@@ -147,12 +146,15 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use actix_web::{test, web, App};
 
     #[actix_rt::test]
-    async fn test_creating_websocket_session() {
-        let pubsub = PubSubServer::new().unwrap();
-        let pss = pubsub.clone().start();
-        let websocket = WebSocketSession::new(&pss);
-        assert_eq!(websocket.broker.connected(), true)
+    async fn test_websocket_pubsub_connection() {
+        let pubsub_server = PubSubServer::new().expect("Could not initiate PubSub server.");
+        let addr = pubsub_server.start();
+        let mut srv = test::start( move || App::new().data(addr.clone()).route("/", web::get().to(wsa)));
+        let conn = srv.ws().await.unwrap();
+        //let resp = test::call_service(&mut app, req).await;
+        assert!(conn.is_write_ready())
     }
 }
