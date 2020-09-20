@@ -8,29 +8,6 @@ use uuid::Uuid;
 use crate::errors::ClientError;
 use crate::websocket::WebSocketSession;
 
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-pub enum ServerMessageData {
-    Publication { id: Uuid, data: String },
-    Response { data: String },
-}
-
-impl From<&ClientSubmission> for ServerMessageData {
-    fn from(submission: &ClientSubmission) -> ServerMessageData {
-        ServerMessageData::Publication {
-            id: submission.id.clone(),
-            data: submission.data.to_owned(),
-        }
-    }
-}
-
-impl From<&String> for ServerMessageData {
-    fn from(message: &String) -> ServerMessageData {
-        ServerMessageData::Response {
-            data: message.to_owned(),
-        }
-    }
-}
-
 /// Represents a message sent by the server to a connected client
 #[derive(Debug, PartialEq, Clone, Message, Serialize, Deserialize)]
 #[rtype(result = "Result<(), ClientError>")]
@@ -38,9 +15,24 @@ pub struct ServerMessage<T>
 where
     T: Serialize,
 {
-    pub content: T,
+    pub data: T,
 }
 
+impl From<&Publication> for ServerMessage<Publication> {
+    fn from(publication: &Publication) -> ServerMessage<Publication> {
+        ServerMessage {
+            data: publication.clone(),
+        }
+    }
+}
+
+impl From<&Response> for ServerMessage<Response> {
+    fn from(resp: &Response) -> ServerMessage<Response> {
+        ServerMessage { data: resp.clone() }
+    }
+}
+
+/// Represents a request to add a new websocket session to the pubsub server
 #[derive(Debug, PartialEq, Clone, Message)]
 #[rtype("()")]
 pub struct ClientJoin {
@@ -48,15 +40,23 @@ pub struct ClientJoin {
     pub addr: Addr<WebSocketSession>,
 }
 
+/// Represents a request to remove a websocket session from the pubsub server
 #[derive(Debug, PartialEq, Clone, Message)]
 #[rtype("()")]
 pub struct ClientDisconnect {
     pub id: ClientID,
 }
 
-///Represents client data intended for publication
+/// Represents a server-sent message in response to a request from ClientMessage `msg_id`
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub struct Response {
+    pub msg_id: Uuid,
+    pub data: String,
+}
+
+/// Represents data intended for distribution to subscribers of Subscription `id`
 #[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
-pub struct ClientSubmission {
+pub struct Publication {
     pub id: Uuid,
     pub data: String,
 }
@@ -74,7 +74,7 @@ pub enum ClientRequest {
     /// was created by client
     Remove { param: Uuid },
     /// Publish a new message to subscribed clients
-    Publish { param: ClientSubmission },
+    Publish { param: Publication },
 }
 
 /// Representing a client identified by its uuid
@@ -131,6 +131,7 @@ impl fmt::Display for ClientID {
 #[rtype(result = "Result<(), ClientError>")]
 pub struct ClientMessage {
     pub id: ClientID,
+    pub msg_id: Uuid,
     pub request: ClientRequest,
 }
 
@@ -162,11 +163,13 @@ pub mod tests {
     fn test_get_message() {
         let client_id =
             ClientID::from(Uuid::from_str("52b43d1e-9945-482c-900a-86125589e937").unwrap());
+        let dummy_message_id = Uuid::from_str("ac042bbb-7a66-4529-a6f5-92f5e53fcbe4").unwrap();
         let dummy_subscription_id = Uuid::from_str("9dd27e53-0918-4adc-bbec-08cd27a3ab7f").unwrap();
         let get: ClientMessage = serde_json::from_str(
             r#"{"id": { 
                     "uid": "52b43d1e-9945-482c-900a-86125589e937"
                 },
+                "msg_id": "ac042bbb-7a66-4529-a6f5-92f5e53fcbe4",
                 "request": { 
                     "Get": {
                         "param": "9dd27e53-0918-4adc-bbec-08cd27a3ab7f"
@@ -179,6 +182,7 @@ pub mod tests {
             get,
             ClientMessage {
                 id: client_id.clone(),
+                msg_id: dummy_message_id,
                 request: ClientRequest::Get {
                     param: dummy_subscription_id
                 }
@@ -190,11 +194,13 @@ pub mod tests {
     fn test_list_message() {
         let client_id =
             ClientID::from(Uuid::from_str("52b43d1e-9945-482c-900a-86125589e937").unwrap());
+        let dummy_message_id = Uuid::from_str("ac042bbb-7a66-4529-a6f5-92f5e53fcbe4").unwrap();
         let list = ClientMessage::try_from(
             r#"{
                 "id": {
                     "uid": "52b43d1e-9945-482c-900a-86125589e937"
                 },
+                "msg_id": "ac042bbb-7a66-4529-a6f5-92f5e53fcbe4",
                 "request": "List"
             }"#,
         )
@@ -203,6 +209,7 @@ pub mod tests {
             list,
             ClientMessage {
                 id: client_id.clone(),
+                msg_id: dummy_message_id,
                 request: ClientRequest::List
             }
         );
@@ -212,12 +219,14 @@ pub mod tests {
     fn test_add_message() {
         let client_id =
             ClientID::from(Uuid::from_str("52b43d1e-9945-482c-900a-86125589e937").unwrap());
+        let dummy_message_id = Uuid::from_str("ac042bbb-7a66-4529-a6f5-92f5e53fcbe4").unwrap();
         let dummy_subscription_id = Uuid::from_str("9dd27e53-0918-4adc-bbec-08cd27a3ab7f").unwrap();
         let add = ClientMessage::try_from(
             r#"{
                 "id": { 
                     "uid": "52b43d1e-9945-482c-900a-86125589e937"
                 },
+                "msg_id": "ac042bbb-7a66-4529-a6f5-92f5e53fcbe4",
                 "request": { 
                     "Add": {
                         "param": "9dd27e53-0918-4adc-bbec-08cd27a3ab7f"
@@ -230,6 +239,7 @@ pub mod tests {
             add,
             ClientMessage {
                 id: client_id.clone(),
+                msg_id: dummy_message_id,
                 request: ClientRequest::Add {
                     param: dummy_subscription_id
                 }
@@ -241,12 +251,14 @@ pub mod tests {
     fn test_remove_message() {
         let client_id =
             ClientID::from(Uuid::from_str("52b43d1e-9945-482c-900a-86125589e937").unwrap());
+        let dummy_message_id = Uuid::from_str("ac042bbb-7a66-4529-a6f5-92f5e53fcbe4").unwrap();
         let dummy_subscription_id = Uuid::from_str("9dd27e53-0918-4adc-bbec-08cd27a3ab7f").unwrap();
         let remove = ClientMessage::try_from(
             r#"{
                 "id": {
                     "uid": "52b43d1e-9945-482c-900a-86125589e937"
                 },
+                "msg_id": "ac042bbb-7a66-4529-a6f5-92f5e53fcbe4",
                 "request": { 
                     "Remove": {
                         "param": "9dd27e53-0918-4adc-bbec-08cd27a3ab7f"
@@ -259,6 +271,7 @@ pub mod tests {
             remove,
             ClientMessage {
                 id: client_id.clone(),
+                msg_id: dummy_message_id,
                 request: ClientRequest::Remove {
                     param: dummy_subscription_id
                 }
@@ -270,8 +283,9 @@ pub mod tests {
     fn test_publish_message() {
         let client_id =
             ClientID::from(Uuid::from_str("52b43d1e-9945-482c-900a-86125589e937").unwrap());
+        let dummy_message_id = Uuid::from_str("ac042bbb-7a66-4529-a6f5-92f5e53fcbe4").unwrap();
         let dummy_subscription_id = Uuid::from_str("9dd27e53-0918-4adc-bbec-08cd27a3ab7f").unwrap();
-        let submission = ClientSubmission {
+        let publication = Publication {
             id: dummy_subscription_id,
             data: "Test publication".to_owned(),
         };
@@ -280,6 +294,7 @@ pub mod tests {
                 "id": {
                     "uid": "52b43d1e-9945-482c-900a-86125589e937"
                 },
+                "msg_id": "ac042bbb-7a66-4529-a6f5-92f5e53fcbe4",
                 "request": { 
                     "Publish": {
                         "param": {
@@ -295,7 +310,8 @@ pub mod tests {
             publish,
             ClientMessage {
                 id: client_id.clone(),
-                request: ClientRequest::Publish { param: submission }
+                msg_id: dummy_message_id,
+                request: ClientRequest::Publish { param: publication }
             }
         );
     }

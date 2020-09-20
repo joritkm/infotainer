@@ -9,7 +9,7 @@ use actix_web_actors::ws;
 
 use crate::errors::ClientError;
 use crate::protocol::{
-    ClientDisconnect, ClientID, ClientJoin, ClientMessage, ServerMessage, ServerMessageData,
+    ClientDisconnect, ClientID, ClientJoin, ClientMessage, Publication, Response, ServerMessage,
 };
 use crate::pubsub::PubSubServer;
 use crate::subscription::Subscription;
@@ -85,20 +85,29 @@ impl Actor for WebSocketSession {
     }
 }
 
-impl Handler<ServerMessage<ServerMessageData>> for WebSocketSession {
+impl Handler<ServerMessage<Response>> for WebSocketSession {
     type Result = Result<(), ClientError>;
 
     fn handle(
         &mut self,
-        msg: ServerMessage<ServerMessageData>,
+        msg: ServerMessage<Response>,
         ctx: &mut Self::Context,
     ) -> Result<(), ClientError> {
-        debug!(
-            "Received {} for {}",
-            serde_json::to_string_pretty(&msg)?,
-            self.id
-        );
+        debug!("Received {:?} for {}", msg, self.id);
         Ok(ctx.text(serde_json::to_string(&msg)?))
+    }
+}
+
+impl Handler<ServerMessage<Publication>> for WebSocketSession {
+    type Result = Result<(), ClientError>;
+
+    fn handle(
+        &mut self,
+        publication: ServerMessage<Publication>,
+        ctx: &mut Self::Context,
+    ) -> Result<(), ClientError> {
+        debug!("Received {:?} for {}", publication, self.id);
+        Ok(ctx.text(serde_json::to_string(&publication)?))
     }
 }
 
@@ -152,9 +161,10 @@ pub mod tests {
     async fn test_websocket_pubsub_connection() {
         let pubsub_server = PubSubServer::new().expect("Could not initiate PubSub server.");
         let addr = pubsub_server.start();
-        let mut srv = test::start( move || App::new().data(addr.clone()).route("/", web::get().to(wsa)));
+        let mut srv =
+            test::start(move || App::new().data(addr.clone()).route("/", web::get().to(wsa)));
         let conn = srv.ws().await.unwrap();
         //let resp = test::call_service(&mut app, req).await;
-        assert!(conn.is_write_ready())
+        assert!(conn.is_write_ready());
     }
 }
