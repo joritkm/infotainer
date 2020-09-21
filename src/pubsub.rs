@@ -1,14 +1,15 @@
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use actix::prelude::{Actor, Context, Handler, Recipient};
+use actix::prelude::{Actor, Addr, Context, Handler};
 
 use crate::errors::ClientError;
 use crate::protocol::{
-    ClientDisconnect, ClientJoin, ClientMessage, ClientRequest, ClientSubmission, ServerMessage,
-    ServerMessageData,
+    ClientDisconnect, ClientJoin, ClientMessage, ClientRequest, Publication, Response,
+    ServerMessage,
 };
 use crate::subscription::{Subscription, Subscriptions};
+use crate::websocket::WebSocketSession;
 
 /// The actor managing `Subscriptions` and handling dissemination of `Publication`s.
 /// Holds a list of currently connected sessions and a `Subscription` store.
@@ -18,7 +19,7 @@ pub struct PubSubServer {
     subs: Subscriptions,
     /// Sessions are represented by the uid of a `ClientID` and
     /// a clients `WebSocketSession` address
-    sessions: HashMap<Uuid, Recipient<ServerMessage<ServerMessageData>>>,
+    sessions: HashMap<Uuid, Addr<WebSocketSession>>,
 }
 
 impl PubSubServer {
@@ -32,13 +33,12 @@ impl PubSubServer {
     }
 
     /// Sends a `ServerMessageData::Response` to a connected client
-    fn send_message(&self, client_id: Uuid, msg: &str) {
-        debug!("Attempting to send message {} to {}", msg, client_id);
-        if let Some(session) = self.sessions.get(&client_id) {
-            let msg = ServerMessage {
-                content: ServerMessageData::from(&msg.to_owned()),
-            };
-            session.do_send(msg).ok();
+    /// TODO: implement message id
+    fn send_response(&self, client_id: &Uuid, resp: &Response) {
+        debug!("Attempting to send reponse {:?}", resp);
+        if let Some(session) = self.sessions.get(client_id) {
+            let msg = ServerMessage::from(resp);
+            session.do_send(msg);
         } else {
             info!(
                 "Could not send message to {}. The session could not be found.",
@@ -48,20 +48,17 @@ impl PubSubServer {
     }
 
     /// Publishes a `ClientSubmission` to all subscribers of a `Subscription`
-    fn publish(&self, submission: &ClientSubmission) -> Result<Vec<String>, ClientError> {
+    fn publish(&self, submission: &Publication) -> Result<Vec<String>, ClientError> {
         match self.subs.fetch(&submission.id) {
             Ok(sub) => {
-                let publication = ServerMessageData::from(submission);
-                let message = ServerMessage {
-                    content: publication,
-                };
+                let publication = ServerMessage::from(submission);
                 info!("Distributing new publication for subscription {}", sub.id);
                 let res = sub
                     .subscribers
                     .iter()
                     .map(|s| match self.sessions.get(&s.id()) {
                         Some(recipient) => {
-                            recipient.do_send(message.clone()).unwrap();
+                            recipient.do_send(publication.clone());
                             debug!("Publication sent to {}", &s);
                             format!("{}", &s.id().to_hyphenated())
                         }
@@ -83,11 +80,12 @@ impl Handler<ClientJoin> for PubSubServer {
     type Result = ();
 
     fn handle(&mut self, join: ClientJoin, _: &mut Context<Self>) {
-        self.sessions.insert(
-            join.id.id(),
-            join.addr.recipient::<ServerMessage<ServerMessageData>>(),
-        );
-        self.send_message(join.id.id(), format!("{}", join.id).as_str())
+        self.sessions.insert(join.id.id(), join.addr);
+        let resp = Response {
+            msg_id: Uuid::nil(),
+            data: format!("{}", join.id),
+        };
+        self.send_response(&join.id.id(), &resp);
     }
 }
 
@@ -104,30 +102,39 @@ impl Handler<ClientMessage> for PubSubServer {
 
     ///Implements processing of `ClientMessage`s for the `PubSubServer` actor
     fn handle(&mut self, msg: ClientMessage, _: &mut Context<Self>) -> Result<(), ClientError> {
-        match msg.request {
+        let resp = match msg.request {
             ClientRequest::List => {
                 debug!("Handling ClientRequest::List for {}", msg.id);
-                Ok(self.send_message(
-                    msg.id.id(),
-                    &serde_json::to_string_pretty(&self.subs.index())?,
-                ))
+                Response {
+                    msg_id: msg.msg_id,
+                    data: serde_json::to_string(&self.subs.index())?,
+                }
             }
             ClientRequest::Add { param } => {
                 debug!(
                     "Handling ClientRequest::Add for {} with param {}",
                     msg.id, param
                 );
-                match self.subs.fetch(&param) {
+                let resp_data = match self.subs.fetch(&param) {
                     Ok(mut s) => {
                         s.append_subscriber(&msg.id);
-                        Ok(self.subs.update(&s))
+                        self.subs.update(&s);
+                        format!("Subscribed to {}", &s.id)
                     }
                     Err(e) => {
                         info!("{} :: Creating new subscription.", e);
                         let mut new_sub = Subscription::new(&param, format!("{}", msg.id).as_str());
-                        new_sub.remove_subscriber(&msg.id);
-                        Ok(self.subs.update(&new_sub))
+                        new_sub.append_subscriber(&msg.id);
+                        self.subs.update(&new_sub);
+                        format!(
+                            "Created and subscribed to new Subscription {}",
+                            &new_sub.id
+                        )
                     }
+                };
+                Response {
+                    msg_id: msg.msg_id,
+                    data: resp_data,
                 }
             }
             ClientRequest::Get { param } => {
@@ -136,7 +143,10 @@ impl Handler<ClientMessage> for PubSubServer {
                     msg.id, param
                 );
                 let s = self.subs.fetch(&param)?;
-                Ok(self.send_message(msg.id.id(), &serde_json::to_string_pretty(&s)?))
+                Response {
+                    msg_id: msg.id.id(),
+                    data: serde_json::to_string(&s)?,
+                }
             }
             ClientRequest::Publish { param } => {
                 debug!(
@@ -144,16 +154,34 @@ impl Handler<ClientMessage> for PubSubServer {
                     msg.id, param
                 );
                 let res = self.publish(&param)?;
-                Ok(self.send_message(msg.id.id(), &serde_json::to_string(&res)?))
+                Response {
+                    msg_id: msg.id.id(),
+                    data: serde_json::to_string(&res)?,
+                }
             }
             ClientRequest::Remove { param } => {
                 debug!(
                     "Handling ClientRequest::Remove for {} with param {}",
                     msg.id, param
                 );
-                Ok(self.subs.remove(&param))
+                let resp_data = match self.subs.fetch(&param) {
+                    Ok(mut s) => {
+                        s.remove_subscriber(&msg.id);
+                        self.subs.update(&s);
+                        format!("Unsubscribed from {}", &s.id)
+                    }
+                    Err(e) => {
+                        warn!("Could not remove subscription for {}, {}", &msg.id, e);
+                        format!("Could not unsubscribe {} from {}. Client not subscribed", &msg.id, &param)
+                    }
+                };
+                Response {
+                    msg_id: msg.id.id(),
+                    data: resp_data,
+                }
             }
-        }
+        };
+        Ok(self.send_response(&msg.id.id(), &resp))
     }
 }
 
@@ -167,7 +195,7 @@ pub mod tests {
         let sub_id = Uuid::new_v4();
         let subscription = Subscription::new(&sub_id, "Test");
         server.subs.update(&subscription);
-        let dummy_submission = ClientSubmission {
+        let dummy_submission = Publication {
             id: sub_id,
             data: "Test".to_owned(),
         };
@@ -176,10 +204,15 @@ pub mod tests {
     }
 
     #[test]
-    fn test_sending_server_message() {
+    fn test_sending_server_response() {
         let server = PubSubServer::new().unwrap();
         let dummy_client_id = Uuid::new_v4();
-        server.send_message(dummy_client_id, "Test");
+        let dummy_message_id = Uuid::nil();
+        let resp = Response {
+            msg_id: dummy_message_id,
+            data: "Test".to_owned(),
+        };
+        server.send_response(&dummy_client_id, &resp);
     }
 
     #[actix_rt::test]
