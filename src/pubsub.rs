@@ -32,8 +32,7 @@ impl PubSubServer {
         })
     }
 
-    /// Sends a `ServerMessageData::Response` to a connected client
-    /// TODO: implement message id
+    /// Sends a `ServerMessageData::Response` to a `WebSocketSession` Actor
     fn send_response(&self, client_id: &Uuid, resp: &Response) {
         debug!("Attempting to send reponse {:?}", resp);
         if let Some(session) = self.sessions.get(client_id) {
