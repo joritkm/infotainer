@@ -8,9 +8,9 @@ edition = "2018"
 name = "infotainer"
 path = "src/lib.rs"
 
-[[bin]]
-name = "infotainer"
-path = "src/server.rs"
+[[example]]
+name = "javascript"
+path = "examples/javascript/server.rs"
 
 [dependencies]
 log = "0.4"
