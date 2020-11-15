@@ -47,24 +47,16 @@ impl PubSubServer {
     }
 
     /// Publishes a `ClientSubmission` to all subscribers of a `Subscription`
-    fn publish(&self, submission: &Publication) -> Result<Vec<String>, ClientError> {
+    fn publish(&self, submission: &Publication) -> Result<(), ClientError> {
         match self.subs.fetch(&submission.id) {
             Ok(sub) => {
                 let publication = ServerMessage::from(submission);
                 info!("Distributing new publication for subscription {}", sub.id);
-                let res = sub
-                    .subscribers
-                    .iter()
-                    .map(|s| match self.sessions.get(&s.id()) {
-                        Some(recipient) => {
-                            recipient.do_send(publication.clone());
-                            debug!("Publication sent to {}", &s);
-                            format!("{}", &s.id().to_hyphenated())
-                        }
-                        _ => format!("No session found for ClientID: {}", &s.id()),
-                    })
-                    .collect();
-                Ok(res)
+                Ok(sub.subscribers.iter().for_each(|s| {
+                    if let Some(recipient) = self.sessions.get(&s.id()) {
+                        recipient.do_send(publication.clone())
+                    }
+                }))
             }
             Err(e) => Err(ClientError::InvalidInput(format!("{}", e))),
         }
@@ -125,10 +117,7 @@ impl Handler<ClientMessage> for PubSubServer {
                         let mut new_sub = Subscription::new(&param, format!("{}", msg.id).as_str());
                         new_sub.append_subscriber(&msg.id);
                         self.subs.update(&new_sub);
-                        format!(
-                            "Created and subscribed to new Subscription {}",
-                            &new_sub.id
-                        )
+                        format!("Created and subscribed to new Subscription {}", &new_sub.id)
                     }
                 };
                 Response {
@@ -171,7 +160,10 @@ impl Handler<ClientMessage> for PubSubServer {
                     }
                     Err(e) => {
                         warn!("Could not remove subscription for {}, {}", &msg.id, e);
-                        format!("Could not unsubscribe {} from {}. Client not subscribed", &msg.id, &param)
+                        format!(
+                            "Could not unsubscribe {} from {}. Client not subscribed",
+                            &msg.id, &param
+                        )
                     }
                 };
                 Response {
@@ -199,7 +191,7 @@ pub mod tests {
             data: "Test".to_owned(),
         };
         let published = server.publish(&dummy_submission).unwrap();
-        assert_eq!(published, Vec::<String>::new())
+        assert_eq!(published, ())
     }
 
     #[test]
