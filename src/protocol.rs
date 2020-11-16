@@ -54,9 +54,23 @@ pub struct Response {
     pub data: String,
 }
 
-/// Represents data intended for distribution to subscribers of Subscription `id`
-#[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
+/// Represents an accepted Submission that can be stored and distributed
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Deserialize, Serialize)]
 pub struct Publication {
+    pub data: String,
+}
+
+impl From<&ClientSubmission> for Publication {
+    fn from(submission: &ClientSubmission) -> Self {
+        Publication {
+            data: submission.data.clone(),
+        }
+    }
+}
+
+/// Represents data intended for distribution to subscribers of Subscription `id`
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct ClientSubmission {
     pub id: Uuid,
     pub data: String,
 }
@@ -66,7 +80,7 @@ pub struct Publication {
 pub enum ClientRequest {
     /// List all currently available subscriptions
     List,
-    /// Get information on a specific subscription
+    /// Get a Subscription's log
     Get { param: Uuid },
     /// Add client to a Subscription, creating it, if it doesn't exist
     Add { param: Uuid },
@@ -74,7 +88,7 @@ pub enum ClientRequest {
     /// was created by client
     Remove { param: Uuid },
     /// Publish a new message to subscribed clients
-    Publish { param: Publication },
+    Publish { param: ClientSubmission },
 }
 
 /// Representing a client identified by its uuid
@@ -116,17 +130,6 @@ impl fmt::Display for ClientID {
 
 /// Represents a message from a connected client,
 /// including the clients identifying uuid and a request
-/// ## Schema
-/// ```json
-/// {
-///   "id": "Uuid",
-///   "req": {
-///     "ClientRequest": {
-///       "param": (Uuid|ClientSubmission)
-///     }
-///   }
-/// }
-/// ```
 #[derive(Debug, PartialEq, Clone, Message, Serialize, Deserialize)]
 #[rtype(result = "Result<(), ClientError>")]
 pub struct ClientMessage {
@@ -285,7 +288,7 @@ pub mod tests {
             ClientID::from(Uuid::from_str("52b43d1e-9945-482c-900a-86125589e937").unwrap());
         let dummy_message_id = Uuid::from_str("ac042bbb-7a66-4529-a6f5-92f5e53fcbe4").unwrap();
         let dummy_subscription_id = Uuid::from_str("9dd27e53-0918-4adc-bbec-08cd27a3ab7f").unwrap();
-        let publication = Publication {
+        let submission = ClientSubmission {
             id: dummy_subscription_id,
             data: "Test publication".to_owned(),
         };
@@ -311,7 +314,7 @@ pub mod tests {
             ClientMessage {
                 id: client_id.clone(),
                 msg_id: dummy_message_id,
-                request: ClientRequest::Publish { param: publication }
+                request: ClientRequest::Publish { param: submission }
             }
         );
     }

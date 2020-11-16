@@ -5,8 +5,8 @@ use actix::prelude::{Actor, Addr, Context, Handler};
 
 use crate::errors::ClientError;
 use crate::protocol::{
-    ClientDisconnect, ClientJoin, ClientMessage, ClientRequest, Publication, Response,
-    ServerMessage,
+    ClientDisconnect, ClientJoin, ClientMessage, ClientRequest, ClientSubmission, Publication,
+    Response, ServerMessage,
 };
 use crate::subscription::{Subscription, Subscriptions};
 use crate::websocket::WebSocketSession;
@@ -16,7 +16,7 @@ use crate::websocket::WebSocketSession;
 #[derive(Debug, PartialEq, Clone)]
 pub struct PubSubServer {
     /// The subscription store
-    subs: Subscriptions,
+    subscriptions: Subscriptions,
     /// Sessions are represented by the uid of a `ClientID` and
     /// a clients `WebSocketSession` address
     sessions: HashMap<Uuid, Addr<WebSocketSession>>,
@@ -27,7 +27,7 @@ impl PubSubServer {
     pub fn new() -> Result<PubSubServer, ClientError> {
         let subs = Subscriptions::new();
         Ok(PubSubServer {
-            subs: subs,
+            subscriptions: subs,
             sessions: HashMap::new(),
         })
     }
@@ -47,16 +47,21 @@ impl PubSubServer {
     }
 
     /// Publishes a `ClientSubmission` to all subscribers of a `Subscription`
-    fn publish(&self, submission: &Publication) -> Result<(), ClientError> {
-        match self.subs.fetch(&submission.id) {
-            Ok(sub) => {
-                let publication = ServerMessage::from(submission);
+    fn publish(&mut self, submission: &ClientSubmission) -> Result<(), ClientError> {
+        match self.subscriptions.fetch(&submission.id) {
+            Ok(mut sub) => {
+                let publication = Publication::from(submission);
+                debug!("Logging publication for Subscription {}", &sub.id);
+                sub.log_submission(&publication);
+                println!("{:?}", sub.log);
+                let publication = ServerMessage::from(&publication);
                 info!("Distributing new publication for subscription {}", sub.id);
-                Ok(sub.subscribers.iter().for_each(|s| {
+                sub.subscribers.iter().for_each(|s| {
                     if let Some(recipient) = self.sessions.get(&s.id()) {
                         recipient.do_send(publication.clone())
                     }
-                }))
+                });
+                Ok(self.subscriptions.update(&sub))
             }
             Err(e) => Err(ClientError::InvalidInput(format!("{}", e))),
         }
@@ -98,7 +103,7 @@ impl Handler<ClientMessage> for PubSubServer {
                 debug!("Handling ClientRequest::List for {}", msg.id);
                 Response {
                     msg_id: msg.msg_id,
-                    data: serde_json::to_string(&self.subs.index())?,
+                    data: serde_json::to_string(&self.subscriptions.index())?,
                 }
             }
             ClientRequest::Add { param } => {
@@ -106,17 +111,17 @@ impl Handler<ClientMessage> for PubSubServer {
                     "Handling ClientRequest::Add for {} with param {}",
                     msg.id, param
                 );
-                let resp_data = match self.subs.fetch(&param) {
+                let resp_data = match self.subscriptions.fetch(&param) {
                     Ok(mut s) => {
                         s.append_subscriber(&msg.id);
-                        self.subs.update(&s);
+                        self.subscriptions.update(&s);
                         format!("Subscribed to {}", &s.id)
                     }
                     Err(e) => {
                         info!("{} :: Creating new subscription.", e);
                         let mut new_sub = Subscription::new(&param, format!("{}", msg.id).as_str());
                         new_sub.append_subscriber(&msg.id);
-                        self.subs.update(&new_sub);
+                        self.subscriptions.update(&new_sub);
                         format!("Created and subscribed to new Subscription {}", &new_sub.id)
                     }
                 };
@@ -130,10 +135,10 @@ impl Handler<ClientMessage> for PubSubServer {
                     "Handling ClientRequest::Get for {} with param {}",
                     msg.id, param
                 );
-                let s = self.subs.fetch(&param)?;
+                let log = self.subscriptions.fetch(&param)?.log;
                 Response {
                     msg_id: msg.id.id(),
-                    data: serde_json::to_string(&s)?,
+                    data: serde_json::to_string(&log)?,
                 }
             }
             ClientRequest::Publish { param } => {
@@ -152,10 +157,10 @@ impl Handler<ClientMessage> for PubSubServer {
                     "Handling ClientRequest::Remove for {} with param {}",
                     msg.id, param
                 );
-                let resp_data = match self.subs.fetch(&param) {
+                let resp_data = match self.subscriptions.fetch(&param) {
                     Ok(mut s) => {
                         s.remove_subscriber(&msg.id);
-                        self.subs.update(&s);
+                        self.subscriptions.update(&s);
                         format!("Unsubscribed from {}", &s.id)
                     }
                     Err(e) => {
@@ -179,19 +184,30 @@ impl Handler<ClientMessage> for PubSubServer {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     #[test]
     fn test_submitting_publication() {
         let mut server = PubSubServer::new().unwrap();
         let sub_id = Uuid::new_v4();
         let subscription = Subscription::new(&sub_id, "Test");
-        server.subs.update(&subscription);
-        let dummy_submission = Publication {
+        let mut dummy_log = HashSet::new();
+        server.subscriptions.update(&subscription);
+        let dummy_submission = ClientSubmission {
             id: sub_id,
             data: "Test".to_owned(),
         };
-        let published = server.publish(&dummy_submission).unwrap();
-        assert_eq!(published, ())
+        let dummy_publication = Publication::from(&dummy_submission);
+        dummy_log.insert(dummy_publication.data);
+        server.publish(&dummy_submission).unwrap();
+        println!("{:?}", server);
+        assert_eq!(server.subscriptions.fetch(&sub_id).unwrap().log, dummy_log);
+        assert!(server
+            .subscriptions
+            .fetch(&sub_id)
+            .unwrap()
+            .log
+            .contains(&dummy_submission.data))
     }
 
     #[test]
