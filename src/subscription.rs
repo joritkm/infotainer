@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::errors::ClientError;
-use crate::protocol::{ClientID, Publication};
+use crate::protocol::Publication;
 
 ///Holds Subscription specific information
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -21,7 +21,7 @@ pub struct Subscription {
     /// Metadata represented by `SubscriptionMeta`
     pub metadata: SubscriptionMeta,
     /// List of currently subscribed clients
-    pub subscribers: Vec<ClientID>,
+    pub subscribers: Vec<Uuid>,
     /// Log of published messages
     pub log: HashSet<String>,
 }
@@ -41,14 +41,14 @@ impl Subscription {
     }
 
     /// Appends a new subscriber to the subscribers Array
-    pub fn append_subscriber(&mut self, subscriber: &ClientID) {
+    pub fn append_subscriber(&mut self, subscriber: &Uuid) {
         if !self.subscribers.contains(subscriber) {
             self.subscribers.push(subscriber.to_owned())
         }
     }
 
     /// Removes a subscriber from the subscribers Array
-    pub fn remove_subscriber(&mut self, subscriber: &ClientID) {
+    pub fn remove_subscriber(&mut self, subscriber: &Uuid) {
         if let Some(sub_index) = self.subscribers.iter().position(|s| s == subscriber) {
             self.subscribers.remove(sub_index);
         }
@@ -107,8 +107,8 @@ pub mod tests {
 
     #[test]
     fn test_subscription() {
-        let dummy_client = ClientID::from(Uuid::new_v4());
-        let mut dummy_subscription = Subscription::new(&dummy_client.id(), "Test Subscription");
+        let dummy_client = Uuid::new_v4();
+        let mut dummy_subscription = Subscription::new(&dummy_client, "Test Subscription");
         let dummy_submission = Publication {
             data: String::from("Test"),
         };

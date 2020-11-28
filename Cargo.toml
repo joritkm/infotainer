@@ -9,13 +9,14 @@ name = "infotainer"
 path = "src/lib.rs"
 
 [[example]]
-name = "javascript"
-path = "examples/javascript/server.rs"
+name = "server"
+path = "examples/server.rs"
 
 [dependencies]
 log = "0.4"
 env_logger = "0.7.1"
 futures = "0.3"
+futures-util = "0.3"
 actix = "0.10"
 actix-codec = "0.3"
 actix-web = "3.0"

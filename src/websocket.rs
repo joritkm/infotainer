@@ -9,7 +9,7 @@ use actix_web_actors::ws;
 
 use crate::errors::ClientError;
 use crate::protocol::{
-    ClientDisconnect, ClientID, ClientJoin, ClientMessage, Publication, Response, ServerMessage,
+    ClientDisconnect, ClientJoin, ClientMessage, Publication, Response, ServerMessage,
 };
 use crate::pubsub::PubSubServer;
 use crate::subscription::Subscription;
@@ -21,25 +21,26 @@ const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 pub async fn wsa(
     req: web::HttpRequest,
     stream: web::Payload,
+    session_id: web::Path<Uuid>,
     pubsub_server: web::Data<Addr<PubSubServer>>,
 ) -> Result<web::HttpResponse, error::Error> {
-    let websocket_session = WebSocketSession::new(pubsub_server.get_ref());
+    let websocket_session = WebSocketSession::new(pubsub_server.get_ref(), &session_id);
     ws::start(websocket_session, &req, stream)
 }
 
 ///Run websocket via actor, track alivenes of clients
 #[derive(Debug, PartialEq, Clone)]
 pub struct WebSocketSession {
-    id: ClientID,
+    id: Uuid,
     hb: Instant,
     subscriptions: Vec<Subscription>,
     broker: Addr<PubSubServer>,
 }
 
 impl WebSocketSession {
-    pub fn new(pubsub_server: &Addr<PubSubServer>) -> WebSocketSession {
+    pub fn new(pubsub_server: &Addr<PubSubServer>, client_id: &Uuid) -> WebSocketSession {
         WebSocketSession {
-            id: ClientID::from(Uuid::new_v4()),
+            id: *client_id,
             hb: Instant::now(),
             subscriptions: Vec::new(),
             broker: pubsub_server.clone(),
@@ -155,16 +156,120 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::protocol::{ClientRequest, ClientSubmission};
     use actix_web::{test, web, App};
+    use futures_util::{sink::SinkExt, stream::StreamExt};
 
     #[actix_rt::test]
     async fn test_websocket_pubsub_connection() {
         let pubsub_server = PubSubServer::new().expect("Could not initiate PubSub server.");
+        let session_id = Uuid::new_v4();
         let addr = pubsub_server.start();
-        let mut srv =
-            test::start(move || App::new().data(addr.clone()).route("/", web::get().to(wsa)));
-        let conn = srv.ws().await.unwrap();
-        //let resp = test::call_service(&mut app, req).await;
-        assert!(conn.is_write_ready());
+        let mut srv = test::start(move || {
+            App::new()
+                .data(addr.clone())
+                .route("/{session_id}", web::get().to(wsa))
+        });
+        let conn = srv.ws_at(&format!("/{}", session_id)).await.unwrap();
+        assert!(&conn.is_write_ready());
+    }
+
+    #[actix_rt::test]
+    async fn test_websocket_messages() {
+        let pubsub_server = PubSubServer::new().expect("Could not initiate PubSub server.");
+        let session_id = Uuid::new_v4();
+        let subscription_id = Uuid::new_v4();
+        let test_submission_data = String::from("Milton Beats <Giver of Beatings>");
+        let add_message = ClientMessage {
+            id: session_id.clone(),
+            request: ClientRequest::Add {
+                param: subscription_id,
+            },
+        };
+        let list_message = ClientMessage {
+            id: session_id,
+            request: ClientRequest::List,
+        };
+        let pub_message = ClientMessage {
+            id: session_id.clone(),
+            request: ClientRequest::Publish {
+                param: ClientSubmission {
+                    id: subscription_id,
+                    data: test_submission_data.clone(),
+                },
+            },
+        };
+        let get_message = ClientMessage {
+            id: session_id.clone(),
+            request: ClientRequest::Get {
+                param: subscription_id,
+            },
+        };
+        let remove_message = ClientMessage {
+            id: session_id,
+            request: ClientRequest::Remove {
+                param: subscription_id
+            }
+        };
+        let addr = pubsub_server.start();
+        let mut srv = test::start(move || {
+            App::new()
+                .data(addr.clone())
+                .route("/{session_id}", web::get().to(wsa))
+        });
+        let mut conn = srv.ws_at(&format!("/{}", session_id)).await.unwrap();
+        assert!(&conn.is_write_ready());
+        &conn.send(ws::Message::Text(
+            serde_json::to_string(&add_message).unwrap(),
+        ))
+        .await
+        .unwrap();
+        let add_response = match conn.next().await.unwrap().unwrap() {
+            ws::Frame::Text(a) => Some(serde_json::from_slice::<Response>(&a[..]).unwrap()),
+            _ => None,
+        };
+        &conn.send(ws::Message::Text(
+            serde_json::to_string(&list_message).unwrap(),
+        ))
+        .await
+        .unwrap();
+        let list_response = match conn.next().await.unwrap().unwrap() {
+            ws::Frame::Text(a) => Some(serde_json::from_slice::<Response>(&a[..]).unwrap()),
+            _ => None,
+        };
+        &conn.send(ws::Message::Text(
+            serde_json::to_string(&pub_message).unwrap(),
+        ))
+        .await
+        .unwrap();
+        let pub_response = match conn.next().await.unwrap().unwrap() {
+            ws::Frame::Text(a) => Some(serde_json::from_slice::<Publication>(&a[..]).unwrap()),
+            _ => None,
+        };
+        conn.next().await;
+        &conn.send(ws::Message::Text(
+            serde_json::to_string(&get_message).unwrap(),
+        ))
+        .await
+        .unwrap();
+        let get_response = match conn.next().await.unwrap().unwrap() {
+            ws::Frame::Text(a) => Some(serde_json::from_slice::<Response>(&a[..]).unwrap()),
+            _ => None,
+        };
+        &conn.send(ws::Message::Text(
+            serde_json::to_string(&remove_message).unwrap(),
+        ))
+        .await
+        .unwrap();
+        let remove_response = match conn.next().await.unwrap().unwrap() {
+            ws::Frame::Text(a) => Some(serde_json::from_slice::<Response>(&a[..]).unwrap()),
+            _ => None,
+        };
+
+        assert_eq!(serde_json::from_str::<Uuid>(&add_response.unwrap().data).unwrap(), subscription_id);
+        assert_eq!(serde_json::from_str::<Vec<Uuid>>(&list_response.unwrap().data).unwrap(), vec![subscription_id]);
+        assert_eq!(pub_response.unwrap().data, test_submission_data);
+        assert_eq!(serde_json::from_str::<Vec<String>>(&get_response.unwrap().data).unwrap(), vec![test_submission_data]);
+        assert_eq!(serde_json::from_str::<Uuid>(&remove_response.unwrap().data).unwrap(), subscription_id);
     }
 }

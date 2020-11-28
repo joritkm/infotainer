@@ -53,11 +53,10 @@ impl PubSubServer {
                 let publication = Publication::from(submission);
                 debug!("Logging publication for Subscription {}", &sub.id);
                 sub.log_submission(&publication);
-                println!("{:?}", sub.log);
                 let publication = ServerMessage::from(&publication);
                 info!("Distributing new publication for subscription {}", sub.id);
                 sub.subscribers.iter().for_each(|s| {
-                    if let Some(recipient) = self.sessions.get(&s.id()) {
+                    if let Some(recipient) = self.sessions.get(&s) {
                         recipient.do_send(publication.clone())
                     }
                 });
@@ -76,12 +75,7 @@ impl Handler<ClientJoin> for PubSubServer {
     type Result = ();
 
     fn handle(&mut self, join: ClientJoin, _: &mut Context<Self>) {
-        self.sessions.insert(join.id.id(), join.addr);
-        let resp = Response {
-            msg_id: Uuid::nil(),
-            data: format!("{}", join.id),
-        };
-        self.send_response(&join.id.id(), &resp);
+        self.sessions.insert(join.id, join.addr);
     }
 }
 
@@ -89,7 +83,7 @@ impl Handler<ClientDisconnect> for PubSubServer {
     type Result = ();
 
     fn handle(&mut self, disco: ClientDisconnect, _: &mut Context<Self>) {
-        self.sessions.remove(&disco.id.id());
+        self.sessions.remove(&disco.id);
     }
 }
 
@@ -102,7 +96,6 @@ impl Handler<ClientMessage> for PubSubServer {
             ClientRequest::List => {
                 debug!("Handling ClientRequest::List for {}", msg.id);
                 Response {
-                    msg_id: msg.msg_id,
                     data: serde_json::to_string(&self.subscriptions.index())?,
                 }
             }
@@ -115,20 +108,17 @@ impl Handler<ClientMessage> for PubSubServer {
                     Ok(mut s) => {
                         s.append_subscriber(&msg.id);
                         self.subscriptions.update(&s);
-                        format!("Subscribed to {}", &s.id)
+                        s.id
                     }
                     Err(e) => {
                         info!("{} :: Creating new subscription.", e);
                         let mut new_sub = Subscription::new(&param, format!("{}", msg.id).as_str());
                         new_sub.append_subscriber(&msg.id);
                         self.subscriptions.update(&new_sub);
-                        format!("Created and subscribed to new Subscription {}", &new_sub.id)
+                        new_sub.id
                     }
                 };
-                Response {
-                    msg_id: msg.msg_id,
-                    data: resp_data,
-                }
+                Response { data: serde_json::to_string(&resp_data)? }
             }
             ClientRequest::Get { param } => {
                 debug!(
@@ -137,7 +127,6 @@ impl Handler<ClientMessage> for PubSubServer {
                 );
                 let log = self.subscriptions.fetch(&param)?.log;
                 Response {
-                    msg_id: msg.id.id(),
                     data: serde_json::to_string(&log)?,
                 }
             }
@@ -148,7 +137,6 @@ impl Handler<ClientMessage> for PubSubServer {
                 );
                 let res = self.publish(&param)?;
                 Response {
-                    msg_id: msg.id.id(),
                     data: serde_json::to_string(&res)?,
                 }
             }
@@ -161,23 +149,17 @@ impl Handler<ClientMessage> for PubSubServer {
                     Ok(mut s) => {
                         s.remove_subscriber(&msg.id);
                         self.subscriptions.update(&s);
-                        format!("Unsubscribed from {}", &s.id)
+                        s.id
                     }
                     Err(e) => {
                         warn!("Could not remove subscription for {}, {}", &msg.id, e);
-                        format!(
-                            "Could not unsubscribe {} from {}. Client not subscribed",
-                            &msg.id, &param
-                        )
+                        msg.id
                     }
                 };
-                Response {
-                    msg_id: msg.id.id(),
-                    data: resp_data,
-                }
+                Response { data: serde_json::to_string(&resp_data)? }
             }
         };
-        Ok(self.send_response(&msg.id.id(), &resp))
+        Ok(self.send_response(&msg.id, &resp))
     }
 }
 
@@ -200,7 +182,6 @@ pub mod tests {
         let dummy_publication = Publication::from(&dummy_submission);
         dummy_log.insert(dummy_publication.data);
         server.publish(&dummy_submission).unwrap();
-        println!("{:?}", server);
         assert_eq!(server.subscriptions.fetch(&sub_id).unwrap().log, dummy_log);
         assert!(server
             .subscriptions
@@ -214,9 +195,7 @@ pub mod tests {
     fn test_sending_server_response() {
         let server = PubSubServer::new().unwrap();
         let dummy_client_id = Uuid::new_v4();
-        let dummy_message_id = Uuid::nil();
         let resp = Response {
-            msg_id: dummy_message_id,
             data: "Test".to_owned(),
         };
         server.send_response(&dummy_client_id, &resp);

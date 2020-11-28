@@ -1,5 +1,4 @@
 use actix::prelude::Actor;
-use actix_files as fs;
 use actix_web::{middleware, web, App, HttpServer};
 
 use infotainer::pubsub::PubSubServer;
@@ -14,8 +13,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .data(addr.clone())
             .wrap(middleware::Logger::default())
-            .service(web::resource("/ws/").route(web::get().to(wsa)))
-            .service(fs::Files::new("/", "examples/javascript/static/").index_file("index.html"))
+            .service(web::resource("/ws/{session_id}").route(web::get().to(wsa)))
     })
     .bind("127.0.0.1:8080")?
     .run()
