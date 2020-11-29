@@ -1,18 +1,18 @@
 use std::convert::TryFrom;
 use std::time::{Duration, Instant};
-use uuid::Uuid;
 
 use actix::prelude::{Addr, AsyncContext, Handler, Running, StreamHandler};
 use actix::{Actor, ActorContext};
 use actix_web::{error, web};
 use actix_web_actors::ws;
+use uuid::Uuid;
 
 use crate::errors::ClientError;
-use crate::protocol::{
+use crate::messages::{
     ClientDisconnect, ClientJoin, ClientMessage, Publication, Response, ServerMessage,
 };
 use crate::pubsub::PubSubServer;
-use crate::subscription::Subscription;
+use crate::subscriptions::Subscription;
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -38,7 +38,7 @@ pub struct WebSocketSession {
 }
 
 impl WebSocketSession {
-    pub fn new(pubsub_server: &Addr<PubSubServer>, client_id: &Uuid) -> WebSocketSession {
+    fn new(pubsub_server: &Addr<PubSubServer>, client_id: &Uuid) -> WebSocketSession {
         WebSocketSession {
             id: *client_id,
             hb: Instant::now(),
@@ -157,12 +157,12 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use std::collections::HashSet;
-    use std::iter::FromIterator;
-    use std::convert::TryInto;
-    use crate::protocol::{ClientRequest, ClientSubmission};
+    use crate::messages::{ClientRequest, ClientSubmission};
     use actix_web::{test, web, App};
     use futures_util::{sink::SinkExt, stream::StreamExt};
+    use std::collections::HashSet;
+    use std::convert::TryInto;
+    use std::iter::FromIterator;
 
     #[actix_rt::test]
     async fn test_pubsub_connection() {
@@ -183,8 +183,11 @@ pub mod tests {
         let pubsub_server = PubSubServer::new().expect("Could not initiate PubSub server.");
         let session_id = Uuid::new_v4();
         let subscription_id = Uuid::new_v4();
-        let test_submission_data = serde_cbor::to_vec(&String::from("Milton Beats <Giver of Beatings>")).unwrap();
-        let test_log = HashSet::from_iter(vec![Publication { data: test_submission_data.clone() }]);
+        let test_submission_data =
+            serde_cbor::to_vec(&String::from("Milton Beats <Giver of Beatings>")).unwrap();
+        let test_log = HashSet::from_iter(vec![Publication {
+            data: test_submission_data.clone(),
+        }]);
         let add_message = ClientMessage {
             id: session_id.clone(),
             request: ClientRequest::Add {
@@ -268,20 +271,23 @@ pub mod tests {
 
         assert_eq!(
             add_response.unwrap(),
-            Response::Add { data: subscription_id }
+            Response::Add {
+                data: subscription_id
+            }
         );
         assert_eq!(
             list_response.unwrap(),
-            Response::List { data: vec![subscription_id] }
+            Response::List {
+                data: vec![subscription_id]
+            }
         );
         assert_eq!(pub_response.unwrap().data, test_submission_data);
-        assert_eq!(
-            get_response.unwrap(),
-            Response::Get { data: test_log }
-        );
+        assert_eq!(get_response.unwrap(), Response::Get { data: test_log });
         assert_eq!(
             remove_response.unwrap(),
-            Response::Remove { data: subscription_id }
+            Response::Remove {
+                data: subscription_id
+            }
         );
     }
 }

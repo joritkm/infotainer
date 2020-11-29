@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::errors::ClientError;
-use crate::protocol::Publication;
+use crate::messages::Publication;
 
 ///Holds Subscription specific information
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]

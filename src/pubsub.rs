@@ -1,14 +1,14 @@
-use std::collections::{ HashMap, HashSet };
-use uuid::Uuid;
+use std::collections::{HashMap, HashSet};
 
 use actix::prelude::{Actor, Addr, Context, Handler};
+use uuid::Uuid;
 
 use crate::errors::ClientError;
-use crate::protocol::{
+use crate::messages::{
     ClientDisconnect, ClientJoin, ClientMessage, ClientRequest, ClientSubmission, Publication,
     Response, ServerMessage,
 };
-use crate::subscription::{Subscription, Subscriptions};
+use crate::subscriptions::{Subscription, Subscriptions};
 use crate::websocket::WebSocketSession;
 
 /// The actor managing `Subscriptions` and handling dissemination of `Publication`s.
@@ -124,16 +124,16 @@ impl Handler<ClientMessage> for PubSubServer {
                         new_sub.id
                     }
                 };
-                Response::Add {
-                    data: resp_data,
-                }
+                Response::Add { data: resp_data }
             }
             ClientRequest::Get { param } => {
                 debug!(
                     "Handling ClientRequest::Get for {} with param {}",
                     msg.id, param
                 );
-                Response::Get { data: self.dump_log(&param)? }
+                Response::Get {
+                    data: self.dump_log(&param)?,
+                }
             }
             ClientRequest::Submit { param } => {
                 debug!(
@@ -159,9 +159,7 @@ impl Handler<ClientMessage> for PubSubServer {
                         msg.id
                     }
                 };
-                Response::Remove {
-                    data: resp_data,
-                }
+                Response::Remove { data: resp_data }
             }
         };
         Ok(self.send_response(&msg.id, &resp))

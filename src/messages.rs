@@ -44,53 +44,6 @@ pub struct ClientDisconnect {
     pub id: Uuid,
 }
 
-/// Represents an accepted Submission that can be stored and distributed
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Deserialize, Serialize)]
-pub struct Publication {
-    pub data: Vec<u8>,
-}
-
-impl From<&ClientSubmission> for Publication {
-    fn from(submission: &ClientSubmission) -> Self {
-        Publication {
-            data: submission.data.to_owned(),
-        }
-    }
-}
-
-/// Represents data sent by the server in response to a ClientRequest
-#[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
-pub enum Response {
-    List { data: Vec<Uuid> },
-    Add { data: Uuid },
-    Get { data: HashSet<Publication> },
-    Remove { data: Uuid },
-    Empty
-}
-
-/// Represents data intended for distribution to subscribers of Subscription `id`
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-pub struct ClientSubmission {
-    pub id: Uuid,
-    pub data: Vec<u8>,
-}
-
-/// Represents a command from a connected client
-#[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
-pub enum ClientRequest {
-    /// List all currently available subscriptions
-    List,
-    /// Get a Subscription's log
-    Get { param: Uuid },
-    /// Add client to a Subscription, creating it, if it doesn't exist
-    Add { param: Uuid },
-    /// Remove client from a Subscription, deleting it, if the Subscription
-    /// was created by client
-    Remove { param: Uuid },
-    /// Submit new data for publication to subscribed clients
-    Submit { param: ClientSubmission },
-}
-
 /// Represents a message from a connected client,
 /// including the clients identifying uuid and a request
 #[derive(Debug, PartialEq, Clone, Message, Serialize, Deserialize)]
@@ -117,4 +70,51 @@ impl TryInto<Bytes> for ClientMessage {
     fn try_into(self) -> Result<Bytes, serde_cbor::Error> {
         Ok(Bytes::from(serde_cbor::to_vec(&self)?))
     }
+}
+
+/// Represents data sent by the server in response to a ClientRequest
+#[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
+pub enum Response {
+    List { data: Vec<Uuid> },
+    Add { data: Uuid },
+    Get { data: HashSet<Publication> },
+    Remove { data: Uuid },
+    Empty,
+}
+
+/// Represents a command from a connected client
+#[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
+pub enum ClientRequest {
+    /// List all currently available subscriptions
+    List,
+    /// Get a Subscription's log
+    Get { param: Uuid },
+    /// Add client to a Subscription, creating it, if it doesn't exist
+    Add { param: Uuid },
+    /// Remove client from a Subscription, deleting it, if the Subscription
+    /// was created by client
+    Remove { param: Uuid },
+    /// Submit new data for publication to subscribed clients
+    Submit { param: ClientSubmission },
+}
+
+/// Represents an accepted Submission that can be stored and distributed
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Deserialize, Serialize)]
+pub struct Publication {
+    pub data: Vec<u8>,
+}
+
+impl From<&ClientSubmission> for Publication {
+    fn from(submission: &ClientSubmission) -> Self {
+        Publication {
+            data: submission.data.to_owned(),
+        }
+    }
+}
+
+/// Represents data intended for distribution to subscribers of Subscription `id`
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct ClientSubmission {
+    pub id: Uuid,
+    pub data: Vec<u8>,
 }

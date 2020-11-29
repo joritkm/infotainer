@@ -30,7 +30,7 @@ extern crate log;
 extern crate failure;
 
 pub mod errors;
-pub mod protocol;
+pub mod messages;
 pub mod pubsub;
-pub mod subscription;
+pub mod subscriptions;
 pub mod websocket;
