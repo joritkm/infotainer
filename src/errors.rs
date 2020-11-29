@@ -1,39 +1,51 @@
 use serde::{Deserialize, Serialize};
 use uuid;
 
-/// This is messy and for now holds arbitrary custom errors.
+/// Wraps internal errors caused by client interaction
 #[derive(Debug, Fail, PartialEq, Clone, Serialize, Deserialize)]
 pub enum ClientError {
-    #[fail(display = "Unknown request Parameter: {}", _0)]
-    UnknownParameter(String),
-
-    #[fail(display = "Unknown request Type: {}", _0)]
-    UnknownType(String),
-
-    #[fail(display = "Missing identification: {}", _0)]
-    MissingIdentification(String),
-
-    #[fail(display = "Missing request: {}", _0)]
-    MissingRequest(String),
-
-    #[fail(display = "Request parameter missing: {}", _0)]
-    MissingParameter(String),
-
-    #[fail(display = "Unable to parse provided input data: {}", _0)]
+    #[fail(display = "Invalid Input: {}", _0)]
     InvalidInput(String),
-
-    #[fail(display = "Error during publication delivery: {}", _0)]
-    PublishingError(String),
 }
 
 impl From<serde_cbor::Error> for ClientError {
     fn from(e: serde_cbor::Error) -> ClientError {
-        ClientError::InvalidInput(format!("SERDE: {}", e))
+        ClientError::InvalidInput(format!("{}", e))
     }
 }
 
 impl From<uuid::Error> for ClientError {
     fn from(e: uuid::Error) -> ClientError {
-        ClientError::InvalidInput(format!("UUID: {}", e))
+        ClientError::InvalidInput(format!("{}", e))
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    use std::str::FromStr;
+    use uuid::Uuid;
+
+    #[test]
+    fn test_client_error () {
+        let err = ClientError::InvalidInput(String::from("Test"));
+        let err_display = format!("{}", err);
+        assert_eq!("Invalid Input: Test", &err_display);
+    }
+
+    #[test]
+    fn test_wrapping_cbor_errors () {
+        if let Err(e) = serde_cbor::from_slice::<String>(&[23]) {
+            let err = ClientError::from(e);
+            assert_eq!("Invalid Input: invalid type: integer `23`, expected a string", format!("{}",err))
+        }
+    }
+    
+    #[test]
+    fn test_wrapping_uuid_errors () {
+        if let Err(e) = Uuid::from_str("notauuidstring") {
+            let err = ClientError::from(e);
+            assert_eq!("Invalid Input: invalid length: expected one of [36, 32], found 14", format!("{}",err))
+        }
     }
 }

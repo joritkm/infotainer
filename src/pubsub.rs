@@ -137,7 +137,7 @@ impl Handler<ClientMessage> for PubSubServer {
             }
             ClientRequest::Submit { param } => {
                 debug!(
-                    "Handling ClientRequest::Publish for {} with param {:#?}",
+                    "Handling ClientRequest::Submit for {} with param {:#?}",
                     msg.id, param
                 );
                 self.publish(&param)?;
