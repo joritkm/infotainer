@@ -26,8 +26,8 @@ pub enum ClientError {
     PublishingError(String),
 }
 
-impl From<serde_json::Error> for ClientError {
-    fn from(e: serde_json::Error) -> ClientError {
+impl From<serde_cbor::Error> for ClientError {
+    fn from(e: serde_cbor::Error) -> ClientError {
         ClientError::InvalidInput(format!("SERDE: {}", e))
     }
 }

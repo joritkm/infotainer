@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{ HashMap, HashSet };
 use uuid::Uuid;
 
 use actix::prelude::{Actor, Addr, Context, Handler};
@@ -30,6 +30,12 @@ impl PubSubServer {
             subscriptions: subs,
             sessions: HashMap::new(),
         })
+    }
+
+    /// Retrieve a subscriptions log
+    pub fn dump_log(&self, subscription_id: &Uuid) -> Result<HashSet<Publication>, ClientError> {
+        let sub = self.subscriptions.fetch(subscription_id)?;
+        Ok(sub.log.clone())
     }
 
     /// Sends a `ServerMessageData::Response` to a `WebSocketSession` Actor
@@ -95,8 +101,8 @@ impl Handler<ClientMessage> for PubSubServer {
         let resp = match msg.request {
             ClientRequest::List => {
                 debug!("Handling ClientRequest::List for {}", msg.id);
-                Response {
-                    data: serde_json::to_string(&self.subscriptions.index())?,
+                Response::List {
+                    data: self.subscriptions.index(),
                 }
             }
             ClientRequest::Add { param } => {
@@ -118,27 +124,24 @@ impl Handler<ClientMessage> for PubSubServer {
                         new_sub.id
                     }
                 };
-                Response { data: serde_json::to_string(&resp_data)? }
+                Response::Add {
+                    data: resp_data,
+                }
             }
             ClientRequest::Get { param } => {
                 debug!(
                     "Handling ClientRequest::Get for {} with param {}",
                     msg.id, param
                 );
-                let log = self.subscriptions.fetch(&param)?.log;
-                Response {
-                    data: serde_json::to_string(&log)?,
-                }
+                Response::Get { data: self.dump_log(&param)? }
             }
-            ClientRequest::Publish { param } => {
+            ClientRequest::Submit { param } => {
                 debug!(
                     "Handling ClientRequest::Publish for {} with param {:#?}",
                     msg.id, param
                 );
-                let res = self.publish(&param)?;
-                Response {
-                    data: serde_json::to_string(&res)?,
-                }
+                self.publish(&param)?;
+                Response::Empty
             }
             ClientRequest::Remove { param } => {
                 debug!(
@@ -156,7 +159,9 @@ impl Handler<ClientMessage> for PubSubServer {
                         msg.id
                     }
                 };
-                Response { data: serde_json::to_string(&resp_data)? }
+                Response::Remove {
+                    data: resp_data,
+                }
             }
         };
         Ok(self.send_response(&msg.id, &resp))
@@ -177,10 +182,10 @@ pub mod tests {
         server.subscriptions.update(&subscription);
         let dummy_submission = ClientSubmission {
             id: sub_id,
-            data: "Test".to_owned(),
+            data: serde_cbor::to_vec(&String::from("Test")).unwrap(),
         };
         let dummy_publication = Publication::from(&dummy_submission);
-        dummy_log.insert(dummy_publication.data);
+        dummy_log.insert(dummy_publication);
         server.publish(&dummy_submission).unwrap();
         assert_eq!(server.subscriptions.fetch(&sub_id).unwrap().log, dummy_log);
         assert!(server
@@ -188,17 +193,7 @@ pub mod tests {
             .fetch(&sub_id)
             .unwrap()
             .log
-            .contains(&dummy_submission.data))
-    }
-
-    #[test]
-    fn test_sending_server_response() {
-        let server = PubSubServer::new().unwrap();
-        let dummy_client_id = Uuid::new_v4();
-        let resp = Response {
-            data: "Test".to_owned(),
-        };
-        server.send_response(&dummy_client_id, &resp);
+            .contains(&Publication::from(&dummy_submission)))
     }
 
     #[actix_rt::test]

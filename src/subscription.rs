@@ -23,7 +23,7 @@ pub struct Subscription {
     /// List of currently subscribed clients
     pub subscribers: Vec<Uuid>,
     /// Log of published messages
-    pub log: HashSet<String>,
+    pub log: HashSet<Publication>,
 }
 
 impl Subscription {
@@ -33,7 +33,7 @@ impl Subscription {
             name: name.to_owned(),
         };
         Subscription {
-            id: id.to_owned(),
+            id: *id,
             metadata: meta_vec,
             subscribers: Vec::new(),
             log: HashSet::new(),
@@ -43,7 +43,7 @@ impl Subscription {
     /// Appends a new subscriber to the subscribers Array
     pub fn append_subscriber(&mut self, subscriber: &Uuid) {
         if !self.subscribers.contains(subscriber) {
-            self.subscribers.push(subscriber.to_owned())
+            self.subscribers.push(*subscriber)
         }
     }
 
@@ -56,7 +56,7 @@ impl Subscription {
 
     /// Appends a submitted publication to the log
     pub fn log_submission(&mut self, publication: &Publication) {
-        self.log.insert(publication.data.clone());
+        self.log.insert(publication.clone());
     }
 }
 
@@ -75,9 +75,9 @@ impl Subscriptions {
         }
     }
 
-    /// Retrieves a list of the current subscriptions
-    pub fn index(&self) -> Vec<&Uuid> {
-        self.store.keys().collect()
+    /// Retrieves a list containing the identifying Uuids of all available Subscriptions
+    pub fn index(&self) -> Vec<Uuid> {
+        self.store.keys().map(|i| *i).collect()
     }
 
     /// Updates the subscription store with new entries,
@@ -97,7 +97,7 @@ impl Subscriptions {
 
     /// Removes a subscription from the subscription store
     pub fn remove(&mut self, id: &Uuid) {
-        self.store.remove(&id);
+        self.store.remove(id);
     }
 }
 
@@ -109,8 +109,8 @@ pub mod tests {
     fn test_subscription() {
         let dummy_client = Uuid::new_v4();
         let mut dummy_subscription = Subscription::new(&dummy_client, "Test Subscription");
-        let dummy_submission = Publication {
-            data: String::from("Test"),
+        let dummy_publication = Publication {
+            data: serde_cbor::to_vec(&1312).unwrap(),
         };
 
         assert_eq!(
@@ -127,8 +127,8 @@ pub mod tests {
             dummy_subscription.subscribers.contains(&dummy_client),
             false
         );
-        dummy_subscription.log_submission(&dummy_submission);
-        assert!(dummy_subscription.log.contains(&dummy_submission.data))
+        dummy_subscription.log_submission(&dummy_publication);
+        assert!(dummy_subscription.log.contains(&dummy_publication))
     }
 
     #[test]
@@ -140,6 +140,6 @@ pub mod tests {
         assert_eq!(fetched_subscription, subscription);
         subscriptions.remove(&fetched_subscription.id);
         let subscription_index = &subscriptions.index();
-        assert_eq!(subscription_index, &Vec::<&Uuid>::new())
+        assert_eq!(subscription_index, &Vec::<Uuid>::new())
     }
 }

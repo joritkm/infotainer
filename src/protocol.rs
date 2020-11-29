@@ -1,6 +1,9 @@
-use std::convert::TryFrom;
+use std::collections::HashSet;
+use std::convert::{TryFrom, TryInto};
+use std::hash::Hash;
 
 use actix::prelude::{Addr, Message};
+use actix_web::web::Bytes;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -41,31 +44,35 @@ pub struct ClientDisconnect {
     pub id: Uuid,
 }
 
-/// Represents a server-sent message
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-pub struct Response {
-    pub data: String,
-}
-
 /// Represents an accepted Submission that can be stored and distributed
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Deserialize, Serialize)]
 pub struct Publication {
-    pub data: String,
+    pub data: Vec<u8>,
 }
 
 impl From<&ClientSubmission> for Publication {
     fn from(submission: &ClientSubmission) -> Self {
         Publication {
-            data: submission.data.clone(),
+            data: submission.data.to_owned(),
         }
     }
+}
+
+/// Represents data sent by the server in response to a ClientRequest
+#[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
+pub enum Response {
+    List { data: Vec<Uuid> },
+    Add { data: Uuid },
+    Get { data: HashSet<Publication> },
+    Remove { data: Uuid },
+    Empty
 }
 
 /// Represents data intended for distribution to subscribers of Subscription `id`
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct ClientSubmission {
     pub id: Uuid,
-    pub data: String,
+    pub data: Vec<u8>,
 }
 
 /// Represents a command from a connected client
@@ -80,8 +87,8 @@ pub enum ClientRequest {
     /// Remove client from a Subscription, deleting it, if the Subscription
     /// was created by client
     Remove { param: Uuid },
-    /// Publish a new message to subscribed clients
-    Publish { param: ClientSubmission },
+    /// Submit new data for publication to subscribed clients
+    Submit { param: ClientSubmission },
 }
 
 /// Represents a message from a connected client,
@@ -93,155 +100,21 @@ pub struct ClientMessage {
     pub request: ClientRequest,
 }
 
-impl TryFrom<&str> for ClientMessage {
-    /// Attempts to create a ClientMessage from a json-string received on
+impl TryFrom<&Bytes> for ClientMessage {
+    /// Attempts to create a ClientMessage from cbor encoded binary data received on
     /// the websocket.
 
-    type Error = serde_json::Error;
-    fn try_from(raw: &str) -> Result<ClientMessage, Self::Error> {
-        serde_json::from_str::<ClientMessage>(raw)
+    type Error = serde_cbor::Error;
+    fn try_from(raw: &Bytes) -> Result<ClientMessage, serde_cbor::Error> {
+        serde_cbor::from_slice::<ClientMessage>(&raw[..])
     }
 }
 
-#[cfg(test)]
-pub mod tests {
-    use super::*;
-    use std::str::FromStr;
+impl TryInto<Bytes> for ClientMessage {
+    // Attemtps to create actix_web::web::Bytes from cbor encoded ClientMessages
 
-    #[test]
-    fn test_client_id() {
-        let id = Uuid::new_v4();
-        let id_string = format!("{}", id.to_hyphenated());
-        let client_id_uuid = Uuid::from(id);
-        let client_id_string: String = format!("{}", client_id_uuid);
-        assert_eq!(id_string, client_id_string);
-    }
-
-    #[test]
-    fn test_get_message() {
-        let client_id = Uuid::from_str("52b43d1e-9945-482c-900a-86125589e937").unwrap();
-        let dummy_subscription_id = Uuid::from_str("9dd27e53-0918-4adc-bbec-08cd27a3ab7f").unwrap();
-        let get: ClientMessage = serde_json::from_str(
-            r#"{
-                "id": "52b43d1e-9945-482c-900a-86125589e937",
-                "request": { 
-                    "Get": {
-                        "param": "9dd27e53-0918-4adc-bbec-08cd27a3ab7f"
-                    }
-                }
-            }"#,
-        )
-        .unwrap();
-        assert_eq!(
-            get,
-            ClientMessage {
-                id: client_id.clone(),
-                request: ClientRequest::Get {
-                    param: dummy_subscription_id
-                }
-            }
-        );
-    }
-
-    #[test]
-    fn test_list_message() {
-        let client_id = Uuid::from_str("52b43d1e-9945-482c-900a-86125589e937").unwrap();
-        let list = ClientMessage::try_from(
-            r#"{
-                "id": "52b43d1e-9945-482c-900a-86125589e937",
-                "request": "List"
-            }"#,
-        )
-        .unwrap();
-        assert_eq!(
-            list,
-            ClientMessage {
-                id: client_id.clone(),
-                request: ClientRequest::List
-            }
-        );
-    }
-
-    #[test]
-    fn test_add_message() {
-        let client_id = Uuid::from_str("52b43d1e-9945-482c-900a-86125589e937").unwrap();
-        let dummy_subscription_id = Uuid::from_str("9dd27e53-0918-4adc-bbec-08cd27a3ab7f").unwrap();
-        let add = ClientMessage::try_from(
-            r#"{
-                "id": "52b43d1e-9945-482c-900a-86125589e937",
-                "request": { 
-                    "Add": {
-                        "param": "9dd27e53-0918-4adc-bbec-08cd27a3ab7f"
-                    }
-                }
-            }"#,
-        )
-        .unwrap();
-        assert_eq!(
-            add,
-            ClientMessage {
-                id: client_id.clone(),
-                request: ClientRequest::Add {
-                    param: dummy_subscription_id
-                }
-            }
-        );
-    }
-
-    #[test]
-    fn test_remove_message() {
-        let client_id = Uuid::from_str("52b43d1e-9945-482c-900a-86125589e937").unwrap();
-        let dummy_subscription_id = Uuid::from_str("9dd27e53-0918-4adc-bbec-08cd27a3ab7f").unwrap();
-        let remove = ClientMessage::try_from(
-            r#"{
-                "id": "52b43d1e-9945-482c-900a-86125589e937",
-                "request": { 
-                    "Remove": {
-                        "param": "9dd27e53-0918-4adc-bbec-08cd27a3ab7f"
-                    }
-                }
-            }"#,
-        )
-        .unwrap();
-        assert_eq!(
-            remove,
-            ClientMessage {
-                id: client_id.clone(),
-                request: ClientRequest::Remove {
-                    param: dummy_subscription_id
-                }
-            }
-        );
-    }
-
-    #[test]
-    fn test_publish_message() {
-        let client_id = Uuid::from_str("52b43d1e-9945-482c-900a-86125589e937").unwrap();
-        let dummy_subscription_id = Uuid::from_str("9dd27e53-0918-4adc-bbec-08cd27a3ab7f").unwrap();
-        let submission = ClientSubmission {
-            id: dummy_subscription_id,
-            data: "Test publication".to_owned(),
-        };
-        let publish: ClientMessage = serde_json::from_str(
-            r#"{
-                "id": "52b43d1e-9945-482c-900a-86125589e937",
-                "request": { 
-                    "Publish": {
-                        "param": {
-                            "id": "9dd27e53-0918-4adc-bbec-08cd27a3ab7f",
-                            "data": "Test publication"
-                        }
-                    }
-                }
-            }"#,
-        )
-        .unwrap();
-        assert_eq!(
-            publish,
-            ClientMessage {
-                id: client_id.clone(),
-                request: ClientRequest::Publish { param: submission }
-            }
-        );
+    type Error = serde_cbor::Error;
+    fn try_into(self) -> Result<Bytes, serde_cbor::Error> {
+        Ok(Bytes::from(serde_cbor::to_vec(&self)?))
     }
 }

@@ -29,8 +29,6 @@ extern crate log;
 #[macro_use]
 extern crate failure;
 
-extern crate serde_json;
-
 pub mod errors;
 pub mod protocol;
 pub mod pubsub;

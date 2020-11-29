@@ -95,7 +95,7 @@ impl Handler<ServerMessage<Response>> for WebSocketSession {
         ctx: &mut Self::Context,
     ) -> Result<(), ClientError> {
         debug!("Received {:?} for {}", msg, self.id);
-        Ok(ctx.text(serde_json::to_string(&msg)?))
+        Ok(ctx.binary(serde_cbor::to_vec(&msg)?))
     }
 }
 
@@ -108,30 +108,31 @@ impl Handler<ServerMessage<Publication>> for WebSocketSession {
         ctx: &mut Self::Context,
     ) -> Result<(), ClientError> {
         debug!("Received {:?} for {}", publication, self.id);
-        Ok(ctx.text(serde_json::to_string(&publication)?))
+        Ok(ctx.binary(serde_cbor::to_vec(&publication)?))
     }
 }
 
 impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession {
     fn handle(&mut self, msg: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
         match msg {
-            Ok(ws::Message::Text(msg)) => {
+            Ok(ws::Message::Text(_)) => {
                 self.hb = Instant::now();
-                info!("Received Message from {}", self.id);
-                match ClientMessage::try_from(msg.as_str()) {
+                info!("Received Text Message from {}", self.id);
+                ctx.text(format!("Text messages not implemented"))
+            }
+            Ok(ws::Message::Binary(msg)) => {
+                self.hb = Instant::now();
+                info!("Received Binary Message from {}", self.id);
+                match ClientMessage::try_from(&msg) {
                     Ok(client_message) => {
                         trace!("Message received: {:#?}", &client_message);
                         self.broker.do_send(client_message)
                     }
                     Err(e) => {
                         error!("{}", &e);
-                        ctx.text(format!("Could not parse message {}", &msg))
+                        ctx.binary(format!("{}", &e))
                     }
-                }
-            }
-            Ok(ws::Message::Binary(_msg)) => {
-                self.hb = Instant::now();
-                ctx.binary(format!("Unexpected binary data received"))
+                };
             }
             Ok(ws::Message::Ping(msg)) => {
                 self.hb = Instant::now();
@@ -156,12 +157,15 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use std::collections::HashSet;
+    use std::iter::FromIterator;
+    use std::convert::TryInto;
     use crate::protocol::{ClientRequest, ClientSubmission};
     use actix_web::{test, web, App};
     use futures_util::{sink::SinkExt, stream::StreamExt};
 
     #[actix_rt::test]
-    async fn test_websocket_pubsub_connection() {
+    async fn test_pubsub_connection() {
         let pubsub_server = PubSubServer::new().expect("Could not initiate PubSub server.");
         let session_id = Uuid::new_v4();
         let addr = pubsub_server.start();
@@ -175,11 +179,12 @@ pub mod tests {
     }
 
     #[actix_rt::test]
-    async fn test_websocket_messages() {
+    async fn test_messages() {
         let pubsub_server = PubSubServer::new().expect("Could not initiate PubSub server.");
         let session_id = Uuid::new_v4();
         let subscription_id = Uuid::new_v4();
-        let test_submission_data = String::from("Milton Beats <Giver of Beatings>");
+        let test_submission_data = serde_cbor::to_vec(&String::from("Milton Beats <Giver of Beatings>")).unwrap();
+        let test_log = HashSet::from_iter(vec![Publication { data: test_submission_data.clone() }]);
         let add_message = ClientMessage {
             id: session_id.clone(),
             request: ClientRequest::Add {
@@ -192,7 +197,7 @@ pub mod tests {
         };
         let pub_message = ClientMessage {
             id: session_id.clone(),
-            request: ClientRequest::Publish {
+            request: ClientRequest::Submit {
                 param: ClientSubmission {
                     id: subscription_id,
                     data: test_submission_data.clone(),
@@ -208,8 +213,8 @@ pub mod tests {
         let remove_message = ClientMessage {
             id: session_id,
             request: ClientRequest::Remove {
-                param: subscription_id
-            }
+                param: subscription_id,
+            },
         };
         let addr = pubsub_server.start();
         let mut srv = test::start(move || {
@@ -219,57 +224,64 @@ pub mod tests {
         });
         let mut conn = srv.ws_at(&format!("/{}", session_id)).await.unwrap();
         assert!(&conn.is_write_ready());
-        &conn.send(ws::Message::Text(
-            serde_json::to_string(&add_message).unwrap(),
-        ))
-        .await
-        .unwrap();
+        &conn
+            .send(ws::Message::Binary(add_message.try_into().unwrap()))
+            .await
+            .unwrap();
         let add_response = match conn.next().await.unwrap().unwrap() {
-            ws::Frame::Text(a) => Some(serde_json::from_slice::<Response>(&a[..]).unwrap()),
+            ws::Frame::Binary(a) => Some(serde_cbor::from_slice::<Response>(&a[..]).unwrap()),
             _ => None,
         };
-        &conn.send(ws::Message::Text(
-            serde_json::to_string(&list_message).unwrap(),
-        ))
-        .await
-        .unwrap();
+        &conn
+            .send(ws::Message::Binary(list_message.try_into().unwrap()))
+            .await
+            .unwrap();
         let list_response = match conn.next().await.unwrap().unwrap() {
-            ws::Frame::Text(a) => Some(serde_json::from_slice::<Response>(&a[..]).unwrap()),
+            ws::Frame::Binary(a) => Some(serde_cbor::from_slice::<Response>(&a[..]).unwrap()),
             _ => None,
         };
-        &conn.send(ws::Message::Text(
-            serde_json::to_string(&pub_message).unwrap(),
-        ))
-        .await
-        .unwrap();
+        &conn
+            .send(ws::Message::Binary(pub_message.try_into().unwrap()))
+            .await
+            .unwrap();
         let pub_response = match conn.next().await.unwrap().unwrap() {
-            ws::Frame::Text(a) => Some(serde_json::from_slice::<Publication>(&a[..]).unwrap()),
+            ws::Frame::Binary(a) => Some(serde_cbor::from_slice::<Publication>(&a[..]).unwrap()),
             _ => None,
         };
         conn.next().await;
-        &conn.send(ws::Message::Text(
-            serde_json::to_string(&get_message).unwrap(),
-        ))
-        .await
-        .unwrap();
+        &conn
+            .send(ws::Message::Binary(get_message.try_into().unwrap()))
+            .await
+            .unwrap();
         let get_response = match conn.next().await.unwrap().unwrap() {
-            ws::Frame::Text(a) => Some(serde_json::from_slice::<Response>(&a[..]).unwrap()),
+            ws::Frame::Binary(a) => Some(serde_cbor::from_slice::<Response>(&a[..]).unwrap()),
             _ => None,
         };
-        &conn.send(ws::Message::Text(
-            serde_json::to_string(&remove_message).unwrap(),
-        ))
-        .await
-        .unwrap();
+        &conn
+            .send(ws::Message::Binary(remove_message.try_into().unwrap()))
+            .await
+            .unwrap();
         let remove_response = match conn.next().await.unwrap().unwrap() {
-            ws::Frame::Text(a) => Some(serde_json::from_slice::<Response>(&a[..]).unwrap()),
+            ws::Frame::Binary(a) => Some(serde_cbor::from_slice::<Response>(&a[..]).unwrap()),
             _ => None,
         };
 
-        assert_eq!(serde_json::from_str::<Uuid>(&add_response.unwrap().data).unwrap(), subscription_id);
-        assert_eq!(serde_json::from_str::<Vec<Uuid>>(&list_response.unwrap().data).unwrap(), vec![subscription_id]);
+        assert_eq!(
+            add_response.unwrap(),
+            Response::Add { data: subscription_id }
+        );
+        assert_eq!(
+            list_response.unwrap(),
+            Response::List { data: vec![subscription_id] }
+        );
         assert_eq!(pub_response.unwrap().data, test_submission_data);
-        assert_eq!(serde_json::from_str::<Vec<String>>(&get_response.unwrap().data).unwrap(), vec![test_submission_data]);
-        assert_eq!(serde_json::from_str::<Uuid>(&remove_response.unwrap().data).unwrap(), subscription_id);
+        assert_eq!(
+            get_response.unwrap(),
+            Response::Get { data: test_log }
+        );
+        assert_eq!(
+            remove_response.unwrap(),
+            Response::Remove { data: subscription_id }
+        );
     }
 }
