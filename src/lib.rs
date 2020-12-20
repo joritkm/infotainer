@@ -29,6 +29,7 @@ extern crate log;
 #[macro_use]
 extern crate failure;
 
+pub mod data_log;
 pub mod errors;
 pub mod messages;
 pub mod pubsub;

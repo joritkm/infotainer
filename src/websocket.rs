@@ -185,9 +185,6 @@ pub mod tests {
         let subscription_id = Uuid::new_v4();
         let test_submission_data =
             serde_cbor::to_vec(&String::from("Milton Beats <Giver of Beatings>")).unwrap();
-        let test_log = HashSet::from_iter(vec![Publication {
-            data: test_submission_data.clone(),
-        }]);
         let add_message = ClientMessage {
             id: session_id.clone(),
             request: ClientRequest::Add {
@@ -281,8 +278,15 @@ pub mod tests {
                 data: vec![subscription_id]
             }
         );
-        assert_eq!(pub_response.unwrap().data, test_submission_data);
-        assert_eq!(get_response.unwrap(), Response::Get { data: test_log });
+
+        let pub_response_content = pub_response.unwrap();
+        assert_eq!(pub_response_content.data, test_submission_data);
+        assert_eq!(
+            get_response.unwrap(),
+            Response::Get {
+                data: HashSet::from_iter(vec!(pub_response_content.id))
+            }
+        );
         assert_eq!(
             remove_response.unwrap(),
             Response::Remove {

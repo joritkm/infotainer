@@ -23,18 +23,18 @@ pub struct Subscription {
     /// List of currently subscribed clients
     pub subscribers: Vec<Uuid>,
     /// Log of published messages
-    pub log: HashSet<Publication>,
+    pub log: HashSet<Uuid>,
 }
 
 impl Subscription {
     /// Generates metadata and creates a new `Subscription`
     pub fn new(id: &Uuid, name: &str) -> Subscription {
-        let meta_vec = SubscriptionMeta {
+        let meta = SubscriptionMeta {
             name: name.to_owned(),
         };
         Subscription {
             id: *id,
-            metadata: meta_vec,
+            metadata: meta,
             subscribers: Vec::new(),
             log: HashSet::new(),
         }
@@ -56,7 +56,7 @@ impl Subscription {
 
     /// Appends a submitted publication to the log
     pub fn log_submission(&mut self, publication: &Publication) {
-        self.log.insert(publication.clone());
+        self.log.insert(publication.id);
     }
 }
 
@@ -110,6 +110,7 @@ pub mod tests {
         let dummy_client = Uuid::new_v4();
         let mut dummy_subscription = Subscription::new(&dummy_client, "Test Subscription");
         let dummy_publication = Publication {
+            id: Uuid::new_v4(),
             data: serde_cbor::to_vec(&1312).unwrap(),
         };
 
@@ -128,7 +129,7 @@ pub mod tests {
             false
         );
         dummy_subscription.log_submission(&dummy_publication);
-        assert!(dummy_subscription.log.contains(&dummy_publication))
+        assert!(dummy_subscription.log.contains(&dummy_publication.id))
     }
 
     #[test]

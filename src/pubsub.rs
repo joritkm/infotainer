@@ -33,7 +33,7 @@ impl PubSubServer {
     }
 
     /// Retrieve a subscriptions log
-    pub fn dump_log(&self, subscription_id: &Uuid) -> Result<HashSet<Publication>, ClientError> {
+    pub fn dump_log(&self, subscription_id: &Uuid) -> Result<HashSet<Uuid>, ClientError> {
         let sub = self.subscriptions.fetch(subscription_id)?;
         Ok(sub.log.clone())
     }
@@ -169,29 +169,19 @@ impl Handler<ClientMessage> for PubSubServer {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use std::collections::HashSet;
 
     #[test]
     fn test_submitting_publication() {
         let mut server = PubSubServer::new().unwrap();
         let sub_id = Uuid::new_v4();
         let subscription = Subscription::new(&sub_id, "Test");
-        let mut dummy_log = HashSet::new();
         server.subscriptions.update(&subscription);
         let dummy_submission = ClientSubmission {
             id: sub_id,
             data: serde_cbor::to_vec(&String::from("Test")).unwrap(),
         };
-        let dummy_publication = Publication::from(&dummy_submission);
-        dummy_log.insert(dummy_publication);
         server.publish(&dummy_submission).unwrap();
-        assert_eq!(server.subscriptions.fetch(&sub_id).unwrap().log, dummy_log);
-        assert!(server
-            .subscriptions
-            .fetch(&sub_id)
-            .unwrap()
-            .log
-            .contains(&Publication::from(&dummy_submission)))
+        assert_eq!(server.subscriptions.fetch(&sub_id).unwrap().log.len(), 1)
     }
 
     #[actix_rt::test]

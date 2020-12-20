@@ -1,7 +1,40 @@
+use actix::prelude::SendError;
 use serde::{Deserialize, Serialize};
 use uuid;
 
-/// Wraps internal errors caused by client interaction
+use crate::data_log::DataLogRequest;
+
+#[derive(Debug, Fail, PartialEq, Clone, Serialize, Deserialize)]
+pub enum DataLogError {
+    #[fail(display = "Encountered error during file system interaction: {}", _0)]
+    FileSystem(String),
+
+    #[fail(display = "Sending DataLog message to DataLogger failed: {}", _0)]
+    DataLogRequest(String),
+
+    #[fail(display = "Could not serialize data for writing to disk: {}", _0)]
+    SerializerError(String),
+}
+
+impl From<SendError<DataLogRequest>> for DataLogError {
+    fn from(e: SendError<DataLogRequest>) -> DataLogError {
+        DataLogError::DataLogRequest(format!("{}", e))
+    }
+}
+
+impl From<std::io::Error> for DataLogError {
+    fn from(e: std::io::Error) -> DataLogError {
+        DataLogError::FileSystem(format!("{}", e))
+    }
+}
+
+impl From<serde_cbor::Error> for DataLogError {
+    fn from(e: serde_cbor::Error) -> DataLogError {
+        DataLogError::SerializerError(format!("{}", e))
+    }
+}
+
+/// Represents errors caused by client interaction
 #[derive(Debug, Fail, PartialEq, Clone, Serialize, Deserialize)]
 pub enum ClientError {
     #[fail(display = "Invalid Input: {}", _0)]

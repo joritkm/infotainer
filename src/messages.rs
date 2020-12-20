@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::convert::{TryFrom, TryInto};
-use std::hash::Hash;
+use std::fmt::Debug;
 
 use actix::prelude::{Addr, Message};
 use actix_web::web::Bytes;
@@ -77,7 +77,7 @@ impl TryInto<Bytes> for ClientMessage {
 pub enum Response {
     List { data: Vec<Uuid> },
     Add { data: Uuid },
-    Get { data: HashSet<Publication> },
+    Get { data: HashSet<Uuid> },
     Remove { data: Uuid },
     Empty,
 }
@@ -99,15 +99,17 @@ pub enum ClientRequest {
 }
 
 /// Represents an accepted Submission that can be stored and distributed
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct Publication {
+    pub id: Uuid,
     pub data: Vec<u8>,
 }
 
 impl From<&ClientSubmission> for Publication {
     fn from(submission: &ClientSubmission) -> Self {
         Publication {
-            data: submission.data.to_owned(),
+            id: Uuid::new_v4(),
+            data: submission.data.clone(),
         }
     }
 }
