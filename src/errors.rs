@@ -4,6 +4,25 @@ use uuid;
 
 use crate::data_log::DataLogRequest;
 
+/// Represents errors caused by client interaction
+#[derive(Debug, Fail, PartialEq, Clone, Serialize, Deserialize)]
+pub enum ClientError {
+    #[fail(display = "Invalid Input: {}", _0)]
+    InvalidInput(String),
+}
+
+impl From<serde_cbor::Error> for ClientError {
+    fn from(e: serde_cbor::Error) -> ClientError {
+        ClientError::InvalidInput(format!("{}", e))
+    }
+}
+
+impl From<uuid::Error> for ClientError {
+    fn from(e: uuid::Error) -> ClientError {
+        ClientError::InvalidInput(format!("{}", e))
+    }
+}
+
 #[derive(Debug, Fail, PartialEq, Clone, Serialize, Deserialize)]
 pub enum DataLogError {
     #[fail(display = "Encountered error during file system interaction: {}", _0)]
@@ -34,23 +53,10 @@ impl From<serde_cbor::Error> for DataLogError {
     }
 }
 
-/// Represents errors caused by client interaction
 #[derive(Debug, Fail, PartialEq, Clone, Serialize, Deserialize)]
-pub enum ClientError {
-    #[fail(display = "Invalid Input: {}", _0)]
-    InvalidInput(String),
-}
-
-impl From<serde_cbor::Error> for ClientError {
-    fn from(e: serde_cbor::Error) -> ClientError {
-        ClientError::InvalidInput(format!("{}", e))
-    }
-}
-
-impl From<uuid::Error> for ClientError {
-    fn from(e: uuid::Error) -> ClientError {
-        ClientError::InvalidInput(format!("{}", e))
-    }
+pub enum PublicationError {
+    #[fail(display = "Could not log publication to the data log: {}", _0)]
+    DataLoggingError(String),
 }
 
 #[cfg(test)]

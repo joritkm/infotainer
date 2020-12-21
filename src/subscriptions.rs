@@ -1,9 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
+use actix::Addr;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::errors::ClientError;
+use crate::data_log::{DataLogEntry, DataLogRequest, DataLogger};
+use crate::errors::{ClientError, DataLogError};
 use crate::messages::Publication;
 
 ///Holds Subscription specific information
@@ -55,8 +57,16 @@ impl Subscription {
     }
 
     /// Appends a submitted publication to the log
-    pub fn log_submission(&mut self, publication: &Publication) {
-        self.log.insert(publication.id);
+    pub fn log_publication(
+        &mut self,
+        publication: &Publication,
+        data_log: &Addr<DataLogger>,
+    ) -> Result<bool, DataLogError> {
+        data_log.try_send(DataLogRequest::new(
+            &self.id,
+            DataLogEntry::from(publication),
+        ))?;
+        Ok(self.log.insert(publication.id))
     }
 }
 
@@ -109,10 +119,6 @@ pub mod tests {
     fn test_subscription() {
         let dummy_client = Uuid::new_v4();
         let mut dummy_subscription = Subscription::new(&dummy_client, "Test Subscription");
-        let dummy_publication = Publication {
-            id: Uuid::new_v4(),
-            data: serde_cbor::to_vec(&1312).unwrap(),
-        };
 
         assert_eq!(
             dummy_subscription.metadata,
@@ -128,8 +134,6 @@ pub mod tests {
             dummy_subscription.subscribers.contains(&dummy_client),
             false
         );
-        dummy_subscription.log_submission(&dummy_publication);
-        assert!(dummy_subscription.log.contains(&dummy_publication.id))
     }
 
     #[test]

@@ -157,12 +157,29 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::messages::{ClientRequest, ClientSubmission};
-    use actix_web::{test, web, App};
-    use futures_util::{sink::SinkExt, stream::StreamExt};
+
     use std::collections::HashSet;
     use std::convert::TryInto;
+    use std::env::temp_dir;
     use std::iter::FromIterator;
+    use std::path::{Path, PathBuf};
+
+    use actix_web::{test, web, App};
+    use futures_util::{sink::SinkExt, stream::StreamExt};
+
+    use crate::data_log::DataLogger;
+    use crate::messages::{ClientRequest, ClientSubmission};
+
+    fn create_test_directory() -> PathBuf {
+        let mut p = temp_dir();
+        p.push(format!("infotainer-{}", Uuid::new_v4().to_hyphenated()));
+        std::fs::create_dir(&p).unwrap();
+        p
+    }
+
+    fn remove_test_directory(p: &Path) {
+        std::fs::remove_dir_all(p).unwrap();
+    }
 
     #[actix_rt::test]
     async fn test_pubsub_connection() {
@@ -179,8 +196,11 @@ pub mod tests {
     }
 
     #[actix_rt::test]
-    async fn test_messages() {
-        let pubsub_server = PubSubServer::new().expect("Could not initiate PubSub server.");
+    async fn test_websocket_pubsub_datalog_integration() {
+        let test_dir = create_test_directory();
+        let data_log = DataLogger::new(&test_dir).unwrap().start();
+        let mut pubsub_server = PubSubServer::new().expect("Could not initiate PubSub server.");
+        &pubsub_server.with_data_log(data_log);
         let session_id = Uuid::new_v4();
         let subscription_id = Uuid::new_v4();
         let test_submission_data =
@@ -293,5 +313,6 @@ pub mod tests {
                 data: subscription_id
             }
         );
+        remove_test_directory(&test_dir);
     }
 }

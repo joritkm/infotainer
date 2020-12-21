@@ -1,5 +1,5 @@
 use std::fmt::Debug;
-use std::fs::OpenOptions;
+use std::fs::{ OpenOptions, create_dir, create_dir_all };
 use std::path::{Path, PathBuf};
 
 use actix::prelude::{Context, Handler, Message};
@@ -16,6 +16,16 @@ use crate::messages::Publication;
 pub struct DataLogRequest {
     pub data_log_id: Uuid,
     pub data_log_entry: DataLogEntry,
+}
+
+impl DataLogRequest {
+    /// Creates a new `DataLogRequest` from a `SubscriptionID` and a `DataLogEntry`
+    pub fn new(subscription_id: &Uuid, entry: DataLogEntry) -> DataLogRequest {
+        DataLogRequest {
+            data_log_id: *subscription_id,
+            data_log_entry: entry,
+        }
+    }
 }
 
 /// The Actor responsible for executing DataLog requests sent by
@@ -45,6 +55,7 @@ impl DataLogger {
             .access(AccessMode::EXISTS | AccessMode::READ | AccessMode::WRITE | AccessMode::EXECUTE)
             .is_ok()
         {
+            create_dir_all(data_dir_path)?;
             Ok(DataLogger {
                 data_dir: PathBuf::from(data_dir_path),
             })
@@ -75,6 +86,7 @@ impl Handler<DataLogRequest> for DataLogger {
         _: &mut Context<Self>,
     ) -> Result<bool, DataLogError> {
         let mut log_path = self.data_dir.join(&request.data_log_id.to_string());
+        create_dir(&log_path)?;
         let log_data = match &request.data_log_entry {
             DataLogEntry::Item(a) => {
                 log_path.set_file_name("subscribers");
@@ -82,7 +94,8 @@ impl Handler<DataLogRequest> for DataLogger {
             }
             DataLogEntry::CollectionItem(a) => {
                 log_path.push("publications");
-                log_path.set_file_name(format!("{}", a.id));
+                create_dir(&log_path)?;
+                log_path.push(format!("{}", a.id));
                 serde_cbor::to_vec(&a)?
             }
         };
@@ -98,6 +111,12 @@ pub enum DataLogEntry {
     Item(Vec<Uuid>),
 }
 
+impl From<&Publication> for DataLogEntry {
+    fn from(p: &Publication) -> DataLogEntry {
+        DataLogEntry::CollectionItem(p.clone())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,7 +124,7 @@ mod tests {
 
     fn create_test_directory() -> PathBuf {
         let mut p = temp_dir();
-        p.push(format!("{}", Uuid::new_v4().to_hyphenated()));
+        p.push(format!("infotainer-{}", Uuid::new_v4().to_hyphenated()));
         std::fs::create_dir(&p).unwrap();
         p
     }
@@ -134,7 +153,7 @@ mod tests {
     }
 
     #[actix_rt::test]
-    async fn test_data_log_request_submission() {
+    async fn test_data_log_item_entry() {
         let test_data_dir = create_test_directory();
         let dummy_data = (0..9).map(|_| Uuid::new_v4()).collect();
         let test_request = DataLogRequest {
@@ -148,5 +167,26 @@ mod tests {
         let result = data_logger_actor.send(test_request).await;
         assert!(result.is_ok());
         remove_test_directory(&test_data_dir);
+    }
+    
+    #[actix_rt::test]
+    async fn test_data_log_collection_item_entry() {
+        let test_data_dir = create_test_directory();
+        let dummy_data = Publication {
+            id: Uuid::new_v4(),
+            data: "Test".as_bytes().to_owned()
+        };
+        let test_request = DataLogRequest {
+            data_log_id: Uuid::new_v4(),
+            data_log_entry: DataLogEntry::CollectionItem(dummy_data),
+        };
+
+        let data_logger = DataLogger::new(&test_data_dir).unwrap();
+        let data_logger_actor = data_logger.start();
+
+        let result = data_logger_actor.send(test_request).await;
+        println!("{:?}", &result);
+        assert!(result.is_ok());
+        //remove_test_directory(&test_data_dir);
     }
 }

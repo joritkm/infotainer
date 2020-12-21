@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use actix::prelude::{Actor, Addr, Context, Handler};
 use uuid::Uuid;
 
+use crate::data_log::DataLogger;
 use crate::errors::ClientError;
 use crate::messages::{
     ClientDisconnect, ClientJoin, ClientMessage, ClientRequest, ClientSubmission, Publication,
@@ -20,6 +21,8 @@ pub struct PubSubServer {
     /// Sessions are represented by the uid of a `ClientID` and
     /// a clients `WebSocketSession` address
     sessions: HashMap<Uuid, Addr<WebSocketSession>>,
+    /// An optionally available connection to a DataLogger actor
+    data_logger: Option<Addr<DataLogger>>,
 }
 
 impl PubSubServer {
@@ -29,7 +32,13 @@ impl PubSubServer {
         Ok(PubSubServer {
             subscriptions: subs,
             sessions: HashMap::new(),
+            data_logger: None,
         })
+    }
+
+    /// Enable persistent publication logs by providing a DataLogger actors Addr.
+    pub fn with_data_log(&mut self, data_logger: Addr<DataLogger>) {
+        self.data_logger = Some(data_logger.clone());
     }
 
     /// Retrieve a subscriptions log
@@ -58,15 +67,20 @@ impl PubSubServer {
             Ok(mut sub) => {
                 let publication = Publication::from(submission);
                 debug!("Logging publication for Subscription {}", &sub.id);
-                sub.log_submission(&publication);
+                if let Some(data_log) = &self.data_logger {
+                    // TODO: this needs to be handled on a higher level. for now panicking
+                    // here is fine. If data logging is enabled and fails, the error should be escalated
+                    // immediately and any further data submissions by clients must be rejected until the situation is resolved.
+                    sub.log_publication(&publication, data_log).unwrap();
+                    self.subscriptions.update(&sub);
+                }
                 let publication = ServerMessage::from(&publication);
                 info!("Distributing new publication for subscription {}", sub.id);
-                sub.subscribers.iter().for_each(|s| {
+                Ok(sub.subscribers.iter().for_each(|s| {
                     if let Some(recipient) = self.sessions.get(&s) {
                         recipient.do_send(publication.clone())
                     }
-                });
-                Ok(self.subscriptions.update(&sub))
+                }))
             }
             Err(e) => Err(ClientError::InvalidInput(format!("{}", e))),
         }
@@ -180,8 +194,7 @@ pub mod tests {
             id: sub_id,
             data: serde_cbor::to_vec(&String::from("Test")).unwrap(),
         };
-        server.publish(&dummy_submission).unwrap();
-        assert_eq!(server.subscriptions.fetch(&sub_id).unwrap().log.len(), 1)
+        assert!(server.publish(&dummy_submission).is_ok());
     }
 
     #[actix_rt::test]
