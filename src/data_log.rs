@@ -63,7 +63,7 @@ impl DataLogRequest {
 /// ```
 /// # use std::fs::{ create_dir, remove_dir_all };
 /// use std::path::Path;
-/// use infotainer::data_log::DataLogger;
+/// use infotainer::prelude::DataLogger;
 ///
 /// let data_dir = Path::new("/tmp/infotainer");
 /// # create_dir(data_dir);
