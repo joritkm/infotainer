@@ -1,14 +1,43 @@
 use std::fmt::Debug;
-use std::fs::{ OpenOptions, create_dir, create_dir_all };
+use std::fs::{create_dir, create_dir_all, OpenOptions};
 use std::path::{Path, PathBuf};
 
-use actix::prelude::{Context, Handler, Message};
-use actix::Actor;
+use actix::prelude::{Actor, Context, Handler, Message, SendError};
 use faccess::{AccessMode, PathExt};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::errors::DataLogError;
-use crate::messages::Publication;
+use crate::pubsub::Publication;
+
+#[derive(Debug, Fail, PartialEq, Clone, Serialize, Deserialize)]
+pub enum DataLogError {
+    #[fail(display = "Encountered error during file system interaction: {}", _0)]
+    FileSystem(String),
+
+    #[fail(display = "Sending DataLog message to DataLogger failed: {}", _0)]
+    DataLogRequest(String),
+
+    #[fail(display = "Could not serialize data for writing to disk: {}", _0)]
+    SerializerError(String),
+}
+
+impl From<SendError<DataLogRequest>> for DataLogError {
+    fn from(e: SendError<DataLogRequest>) -> DataLogError {
+        DataLogError::DataLogRequest(format!("{}", e))
+    }
+}
+
+impl From<std::io::Error> for DataLogError {
+    fn from(e: std::io::Error) -> DataLogError {
+        DataLogError::FileSystem(format!("{}", e))
+    }
+}
+
+impl From<serde_cbor::Error> for DataLogError {
+    fn from(e: serde_cbor::Error) -> DataLogError {
+        DataLogError::SerializerError(format!("{}", e))
+    }
+}
 
 /// Represents a message sent to the DataLogger via the DataLogRequest trait
 #[derive(Debug, Message)]
@@ -168,13 +197,13 @@ mod tests {
         assert!(result.is_ok());
         remove_test_directory(&test_data_dir);
     }
-    
+
     #[actix_rt::test]
     async fn test_data_log_collection_item_entry() {
         let test_data_dir = create_test_directory();
         let dummy_data = Publication {
             id: Uuid::new_v4(),
-            data: "Test".as_bytes().to_owned()
+            data: "Test".as_bytes().to_owned(),
         };
         let test_request = DataLogRequest {
             data_log_id: Uuid::new_v4(),

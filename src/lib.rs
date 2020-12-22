@@ -29,9 +29,13 @@ extern crate log;
 #[macro_use]
 extern crate failure;
 
-pub mod data_log;
-pub mod errors;
-pub mod messages;
-pub mod pubsub;
-pub mod subscriptions;
-pub mod websocket;
+mod data_log;
+mod pubsub;
+mod websocket;
+
+
+pub mod prelude {
+    pub use crate::data_log::DataLogger;
+    pub use crate::pubsub::PubSubServer;
+    pub use crate::websocket::websocket_handler;
+}

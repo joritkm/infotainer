@@ -1,24 +1,40 @@
-use std::convert::TryFrom;
+use std::convert::{TryFrom, TryInto};
 use std::time::{Duration, Instant};
 
-use actix::prelude::{Addr, AsyncContext, Handler, Running, StreamHandler};
-use actix::{Actor, ActorContext};
-use actix_web::{error, web};
+use actix::prelude::{
+    Actor, ActorContext, Addr, AsyncContext, Handler, Message, Running, StreamHandler,
+};
+use actix_web::{error, web, web::Bytes};
 use actix_web_actors::ws;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::errors::ClientError;
-use crate::messages::{
-    ClientDisconnect, ClientJoin, ClientMessage, Publication, Response, ServerMessage,
-};
-use crate::pubsub::PubSubServer;
-use crate::subscriptions::Subscription;
+use crate::pubsub::{PubSubServer, Publication, Response, ServerMessage, Subscription};
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Represents errors caused by client interaction
+#[derive(Debug, Fail, PartialEq, Clone, Serialize, Deserialize)]
+pub enum ClientError {
+    #[fail(display = "Invalid Input: {}", _0)]
+    InvalidInput(String),
+}
+
+impl From<serde_cbor::Error> for ClientError {
+    fn from(e: serde_cbor::Error) -> ClientError {
+        ClientError::InvalidInput(format!("{}", e))
+    }
+}
+
+impl From<uuid::Error> for ClientError {
+    fn from(e: uuid::Error) -> ClientError {
+        ClientError::InvalidInput(format!("{}", e))
+    }
+}
+
 ///Perform ws-handshake and create the socket.
-pub async fn wsa(
+pub async fn websocket_handler(
     req: web::HttpRequest,
     stream: web::Payload,
     session_id: web::Path<Uuid>,
@@ -154,6 +170,72 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
     }
 }
 
+/// Represents a request to add a new websocket session to the pubsub server
+#[derive(Debug, PartialEq, Clone, Message)]
+#[rtype("()")]
+pub struct ClientJoin {
+    pub id: Uuid,
+    pub addr: Addr<WebSocketSession>,
+}
+
+/// Represents a request to remove a websocket session from the pubsub server
+#[derive(Debug, PartialEq, Clone, Message)]
+#[rtype("()")]
+pub struct ClientDisconnect {
+    pub id: Uuid,
+}
+
+/// Represents a message from a connected client,
+/// including the clients identifying uuid and a request
+#[derive(Debug, PartialEq, Clone, Message, Serialize, Deserialize)]
+#[rtype(result = "Result<(), ClientError>")]
+pub struct ClientMessage {
+    pub id: Uuid,
+    pub request: ClientRequest,
+}
+
+impl TryFrom<&Bytes> for ClientMessage {
+    /// Attempts to create a ClientMessage from cbor encoded binary data received on
+    /// the websocket.
+
+    type Error = serde_cbor::Error;
+    fn try_from(raw: &Bytes) -> Result<ClientMessage, serde_cbor::Error> {
+        serde_cbor::from_slice::<ClientMessage>(&raw[..])
+    }
+}
+
+impl TryInto<Bytes> for ClientMessage {
+    // Attemtps to create actix_web::web::Bytes from cbor encoded ClientMessages
+
+    type Error = serde_cbor::Error;
+    fn try_into(self) -> Result<Bytes, serde_cbor::Error> {
+        Ok(Bytes::from(serde_cbor::to_vec(&self)?))
+    }
+}
+
+/// Represents a command from a connected client
+#[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
+pub enum ClientRequest {
+    /// List all currently available subscriptions
+    List,
+    /// Get a Subscription's log
+    Get { param: Uuid },
+    /// Add client to a Subscription, creating it, if it doesn't exist
+    Add { param: Uuid },
+    /// Remove client from a Subscription, deleting it, if the Subscription
+    /// was created by client
+    Remove { param: Uuid },
+    /// Submit new data for publication to subscribed clients
+    Submit { param: ClientSubmission },
+}
+
+/// Represents data intended for distribution to subscribers of Subscription `id`
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct ClientSubmission {
+    pub id: Uuid,
+    pub data: Vec<u8>,
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
@@ -163,12 +245,12 @@ pub mod tests {
     use std::env::temp_dir;
     use std::iter::FromIterator;
     use std::path::{Path, PathBuf};
+    use std::str::FromStr;
 
     use actix_web::{test, web, App};
     use futures_util::{sink::SinkExt, stream::StreamExt};
 
     use crate::data_log::DataLogger;
-    use crate::messages::{ClientRequest, ClientSubmission};
 
     fn create_test_directory() -> PathBuf {
         let mut p = temp_dir();
@@ -183,13 +265,13 @@ pub mod tests {
 
     #[actix_rt::test]
     async fn test_pubsub_connection() {
-        let pubsub_server = PubSubServer::new().expect("Could not initiate PubSub server.");
+        let pubsub_server = PubSubServer::default();
         let session_id = Uuid::new_v4();
         let addr = pubsub_server.start();
         let mut srv = test::start(move || {
             App::new()
                 .data(addr.clone())
-                .route("/{session_id}", web::get().to(wsa))
+                .route("/{session_id}", web::get().to(websocket_handler))
         });
         let conn = srv.ws_at(&format!("/{}", session_id)).await.unwrap();
         assert!(&conn.is_write_ready());
@@ -199,8 +281,7 @@ pub mod tests {
     async fn test_websocket_pubsub_datalog_integration() {
         let test_dir = create_test_directory();
         let data_log = DataLogger::new(&test_dir).unwrap().start();
-        let mut pubsub_server = PubSubServer::new().expect("Could not initiate PubSub server.");
-        &pubsub_server.with_data_log(data_log);
+        let pubsub_server = PubSubServer::new(Some(&data_log)).expect("Could not initiate PubSub server.");
         let session_id = Uuid::new_v4();
         let subscription_id = Uuid::new_v4();
         let test_submission_data =
@@ -240,7 +321,7 @@ pub mod tests {
         let mut srv = test::start(move || {
             App::new()
                 .data(addr.clone())
-                .route("/{session_id}", web::get().to(wsa))
+                .route("/{session_id}", web::get().to(websocket_handler))
         });
         let mut conn = srv.ws_at(&format!("/{}", session_id)).await.unwrap();
         assert!(&conn.is_write_ready());
@@ -314,5 +395,34 @@ pub mod tests {
             }
         );
         remove_test_directory(&test_dir);
+    }
+
+    #[test]
+    fn test_client_error() {
+        let err = ClientError::InvalidInput(String::from("Test"));
+        let err_display = format!("{}", err);
+        assert_eq!("Invalid Input: Test", &err_display);
+    }
+
+    #[test]
+    fn test_wrapping_cbor_errors() {
+        if let Err(e) = serde_cbor::from_slice::<String>(&[23]) {
+            let err = ClientError::from(e);
+            assert_eq!(
+                "Invalid Input: invalid type: integer `23`, expected a string",
+                format!("{}", err)
+            )
+        }
+    }
+
+    #[test]
+    fn test_wrapping_uuid_errors() {
+        if let Err(e) = Uuid::from_str("notauuidstring") {
+            let err = ClientError::from(e);
+            assert_eq!(
+                "Invalid Input: invalid length: expected one of [36, 32], found 14",
+                format!("{}", err)
+            )
+        }
     }
 }
