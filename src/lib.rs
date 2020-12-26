@@ -33,7 +33,6 @@ mod data_log;
 mod pubsub;
 mod websocket;
 
-
 pub mod prelude {
     pub use crate::data_log::DataLogger;
     pub use crate::pubsub::PubSubServer;

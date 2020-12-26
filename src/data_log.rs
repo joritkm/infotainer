@@ -61,7 +61,7 @@ impl DataLogRequest {
 /// PubSubServer actors.
 /// ## Example
 /// ```
-/// # use std::fs::{ create_dir, remove_dir_all };
+/// # use std::fs::{create_dir, remove_dir_all};
 /// use std::path::Path;
 /// use infotainer::prelude::DataLogger;
 ///

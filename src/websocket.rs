@@ -281,7 +281,8 @@ pub mod tests {
     async fn test_websocket_pubsub_datalog_integration() {
         let test_dir = create_test_directory();
         let data_log = DataLogger::new(&test_dir).unwrap().start();
-        let pubsub_server = PubSubServer::new(Some(&data_log)).expect("Could not initiate PubSub server.");
+        let pubsub_server =
+            PubSubServer::new(Some(&data_log)).expect("Could not initiate PubSub server.");
         let session_id = Uuid::new_v4();
         let subscription_id = Uuid::new_v4();
         let test_submission_data =
