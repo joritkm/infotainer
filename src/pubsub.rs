@@ -175,6 +175,9 @@ impl Handler<ClientMessage> for PubSubServer {
                 let resp_data = match self.subscriptions.fetch(&param) {
                     Ok(mut s) => {
                         s.remove_subscriber(&msg.id);
+                        if s.subscribers.is_empty() {
+                            self.subscriptions.remove(&param)
+                        };
                         self.subscriptions.update(&s);
                         s.id
                     }
