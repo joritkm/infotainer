@@ -218,7 +218,7 @@ impl TryInto<Bytes> for ClientMessage {
 pub enum ClientRequest {
     /// List all currently available subscriptions
     List,
-    /// Get a Subscription's log
+    /// Fetch a Subscription's log index
     Get { param: Uuid },
     /// Add client to a Subscription, creating it, if it doesn't exist
     Add { param: Uuid },

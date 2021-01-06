@@ -21,8 +21,8 @@ pub enum DataLogError {
     SerializerError(String),
 }
 
-impl From<SendError<DataLogRequest>> for DataLogError {
-    fn from(e: SendError<DataLogRequest>) -> DataLogError {
+impl From<SendError<DataLogPut>> for DataLogError {
+    fn from(e: SendError<DataLogPut>) -> DataLogError {
         DataLogError::DataLogRequest(format!("{}", e))
     }
 }
@@ -39,20 +39,38 @@ impl From<serde_cbor::Error> for DataLogError {
     }
 }
 
-/// Represents a message sent to the DataLogger via the DataLogRequest trait
+/// Represents a request for writing contained data
 #[derive(Debug, Message)]
-#[rtype("Result<bool, DataLogError>")]
-pub struct DataLogRequest {
-    pub data_log_id: Uuid,
-    pub data_log_entry: DataLogEntry,
+#[rtype("Result<(), DataLogError>")]
+pub struct DataLogPut {
+    data_log_id: Uuid,
+    data_log_entry: DataLogEntry,
 }
 
-impl DataLogRequest {
-    /// Creates a new `DataLogRequest` from a `SubscriptionID` and a `DataLogEntry`
-    pub fn new(subscription_id: &Uuid, entry: DataLogEntry) -> DataLogRequest {
-        DataLogRequest {
-            data_log_id: *subscription_id,
+impl DataLogPut {
+    /// Creates a new DataLogPut request from a Uuid and a DataLogEntry
+    pub fn new(log_id: &Uuid, entry: DataLogEntry) -> DataLogPut {
+        DataLogPut {
+            data_log_id: *log_id,
             data_log_entry: entry,
+        }
+    }
+}
+
+/// Represents a response to data log entry fetch requests
+#[derive(Debug, Message)]
+#[rtype("Result<DataLogEntry, DataLogError>")]
+pub struct DataLogFetch {
+    data_log_id: Uuid,
+    requested_datalog_entries: Option<Vec<Uuid>>,
+}
+
+impl DataLogFetch {
+    /// Creates a new DataLogFetch request from a Uuid and an optional array of Uuids.
+    pub fn new(subscription_id: &Uuid, entries: Option<Vec<Uuid>>) -> Self {
+        DataLogFetch {
+            data_log_id: *subscription_id,
+            requested_datalog_entries: entries,
         }
     }
 }
@@ -94,55 +112,80 @@ impl DataLogger {
             )))
         }
     }
-
-    fn write_data(&self, path: &PathBuf, log_entry: &Vec<u8>) -> Result<usize, DataLogError> {
-        let rio = rio::new()?;
-        let file = OpenOptions::new().create(true).append(true).open(path)?;
-        Ok(rio.write_at(&file, log_entry, 0).wait()?)
-    }
 }
 
 impl Actor for DataLogger {
     type Context = Context<DataLogger>;
 }
 
-impl Handler<DataLogRequest> for DataLogger {
-    type Result = Result<bool, DataLogError>;
+impl Handler<DataLogPut> for DataLogger {
+    type Result = Result<(), DataLogError>;
 
-    fn handle(
-        &mut self,
-        request: DataLogRequest,
-        _: &mut Context<Self>,
-    ) -> Result<bool, DataLogError> {
+    fn handle(&mut self, request: DataLogPut, _: &mut Context<Self>) -> Self::Result {
         let mut log_path = self.data_dir.join(&request.data_log_id.to_string());
         create_dir(&log_path)?;
-        let log_data = match &request.data_log_entry {
-            DataLogEntry::Item(a) => {
-                log_path.set_file_name("subscribers");
-                serde_cbor::to_vec(&a)?
+        Ok(match &request.data_log_entry {
+            DataLogEntry::Subscribers(subscribers) => {
+                log_path.push("subscribers");
+                let subscribers_file = OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .open(&log_path)?;
+                serde_cbor::to_writer(subscribers_file, &subscribers)?;
             }
-            DataLogEntry::CollectionItem(a) => {
+            DataLogEntry::Publications(entries) => {
                 log_path.push("publications");
                 create_dir(&log_path)?;
-                log_path.push(format!("{}", a.id));
-                serde_cbor::to_vec(&a)?
+                for item in entries {
+                    &log_path.push(item.id.to_string());
+                    let entry_file = OpenOptions::new()
+                        .create(true)
+                        .write(true)
+                        .open(&log_path)?;
+                    serde_cbor::to_writer(entry_file, &item)?;
+                    &log_path.pop();
+                }
+            }
+        })
+    }
+}
+
+impl Handler<DataLogFetch> for DataLogger {
+    type Result = Result<DataLogEntry, DataLogError>;
+
+    fn handle(&mut self, request: DataLogFetch, _: &mut Context<Self>) -> Self::Result {
+        let mut log_path = self.data_dir.join(&request.data_log_id.to_string());
+        let res = match request.requested_datalog_entries {
+            Some(entries) => {
+                log_path.push("publications");
+                let mut read_results = Vec::new();
+                for item in entries {
+                    &log_path.push(item.to_string());
+                    let entry_file = OpenOptions::new().read(true).open(&log_path)?;
+                    read_results.push(serde_cbor::from_reader(&entry_file)?);
+                }
+                DataLogEntry::Publications(read_results)
+            }
+            _ => {
+                log_path.push("subscribers");
+                let subscribers_file = OpenOptions::new().read(true).open(&log_path)?;
+                DataLogEntry::Subscribers(serde_cbor::from_reader(&subscribers_file)?)
             }
         };
-        let res = self.write_data(&log_path, &log_data)?;
-        Ok(&res == &log_data.len())
+        Ok(res)
     }
 }
 
 /// Holds data intended for writing. The variants indicate whether data should be held by a single file or by a file within a collection
 #[derive(Debug, PartialEq)]
 pub enum DataLogEntry {
-    CollectionItem(Publication),
-    Item(Vec<Uuid>),
+    Publications(Vec<Publication>),
+    Subscribers(Vec<Uuid>),
 }
 
 impl From<&Publication> for DataLogEntry {
     fn from(p: &Publication) -> DataLogEntry {
-        DataLogEntry::CollectionItem(p.clone())
+        DataLogEntry::Publications(vec![p.clone()])
     }
 }
 
@@ -185,16 +228,22 @@ mod tests {
     async fn test_data_log_item_entry() {
         let test_data_dir = create_test_directory();
         let dummy_data = (0..9).map(|_| Uuid::new_v4()).collect();
-        let test_request = DataLogRequest {
+        let test_write_request = DataLogPut {
             data_log_id: Uuid::new_v4(),
-            data_log_entry: DataLogEntry::Item(dummy_data),
+            data_log_entry: DataLogEntry::Subscribers(dummy_data),
+        };
+        let test_read_request = DataLogFetch {
+            data_log_id: test_write_request.data_log_id,
+            requested_datalog_entries: None,
         };
 
         let data_logger = DataLogger::new(&test_data_dir).unwrap();
         let data_logger_actor = data_logger.start();
 
-        let result = data_logger_actor.send(test_request).await;
-        assert!(result.is_ok());
+        let write_result = data_logger_actor.send(test_write_request).await;
+        let read_result = data_logger_actor.send(test_read_request).await;
+        assert!(write_result.is_ok());
+        assert!(read_result.is_ok());
         remove_test_directory(&test_data_dir);
     }
 
@@ -205,17 +254,22 @@ mod tests {
             id: Uuid::new_v4(),
             data: "Test".as_bytes().to_owned(),
         };
-        let test_request = DataLogRequest {
+        let test_write_request = DataLogPut {
             data_log_id: Uuid::new_v4(),
-            data_log_entry: DataLogEntry::CollectionItem(dummy_data),
+            data_log_entry: DataLogEntry::Publications(vec![dummy_data.clone()]),
+        };
+        let test_read_request = DataLogFetch {
+            data_log_id: test_write_request.data_log_id,
+            requested_datalog_entries: Some(vec![dummy_data.id]),
         };
 
         let data_logger = DataLogger::new(&test_data_dir).unwrap();
         let data_logger_actor = data_logger.start();
 
-        let result = data_logger_actor.send(test_request).await;
-        println!("{:?}", &result);
-        assert!(result.is_ok());
-        //remove_test_directory(&test_data_dir);
+        let write_result = data_logger_actor.send(test_write_request).await;
+        let read_result = data_logger_actor.send(test_read_request).await;
+        assert!(write_result.unwrap().is_ok());
+        assert!(read_result.unwrap().is_ok());
+        remove_test_directory(&test_data_dir);
     }
 }

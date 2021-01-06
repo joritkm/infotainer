@@ -4,7 +4,7 @@ use actix::prelude::{Actor, Addr, Context, Handler, Message};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::data_log::{DataLogEntry, DataLogError, DataLogRequest, DataLogger};
+use crate::data_log::{DataLogEntry, DataLogError, DataLogPut, DataLogger};
 use crate::websocket::{
     ClientDisconnect, ClientError, ClientJoin, ClientMessage, ClientRequest, ClientSubmission,
     WebSocketSession,
@@ -263,10 +263,7 @@ impl Subscription {
         publication: &Publication,
         data_log: &Addr<DataLogger>,
     ) -> Result<bool, DataLogError> {
-        data_log.try_send(DataLogRequest::new(
-            &self.id,
-            DataLogEntry::from(publication),
-        ))?;
+        data_log.try_send(DataLogPut::new(&self.id, DataLogEntry::from(publication)))?;
         Ok(self.log.insert(publication.id))
     }
 }
