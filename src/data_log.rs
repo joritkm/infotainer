@@ -2,7 +2,7 @@ use std::fmt::Debug;
 use std::fs::{create_dir, create_dir_all, OpenOptions};
 use std::path::{Path, PathBuf};
 
-use actix::prelude::{Actor, Context, Handler, Message, SendError};
+use actix::prelude::{Actor, Context, Handler, Message, ResponseFuture, SendError};
 use faccess::{AccessMode, PathExt};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -119,60 +119,65 @@ impl Actor for DataLogger {
 }
 
 impl Handler<DataLogPut> for DataLogger {
-    type Result = Result<(), DataLogError>;
+    type Result = ResponseFuture<Result<(), DataLogError>>;
 
     fn handle(&mut self, request: DataLogPut, _: &mut Context<Self>) -> Self::Result {
         let mut log_path = self.data_dir.join(&request.data_log_id.to_string());
-        create_dir(&log_path)?;
-        Ok(match &request.data_log_entry {
-            DataLogEntry::Subscribers(subscribers) => {
-                log_path.push("subscribers");
-                let subscribers_file = OpenOptions::new()
-                    .create(true)
-                    .write(true)
-                    .open(&log_path)?;
-                serde_cbor::to_writer(subscribers_file, &subscribers)?;
-            }
-            DataLogEntry::Publications(entries) => {
-                log_path.push("publications");
-                create_dir(&log_path)?;
-                for item in entries {
-                    &log_path.push(item.id.to_string());
-                    let entry_file = OpenOptions::new()
+        Box::pin(async move {
+            Ok(match &request.data_log_entry {
+                DataLogEntry::Subscribers(subscribers) => {
+                    create_dir(&log_path)?;
+                    log_path.push("subscribers");
+                    let subscribers_file = OpenOptions::new()
                         .create(true)
                         .write(true)
                         .open(&log_path)?;
-                    serde_cbor::to_writer(entry_file, &item)?;
-                    &log_path.pop();
+                    serde_cbor::to_writer(subscribers_file, &subscribers)?;
                 }
-            }
+                DataLogEntry::Publications(entries) => {
+                    log_path.push("publications");
+                    create_dir_all(&log_path)?;
+                    for item in entries {
+                        &log_path.push(item.id.to_string());
+                        let entry_file = OpenOptions::new()
+                            .create(true)
+                            .write(true)
+                            .open(&log_path)?;
+                        serde_cbor::to_writer(entry_file, &item)?;
+                        &log_path.pop();
+                    }
+                }
+            })
         })
     }
 }
 
 impl Handler<DataLogFetch> for DataLogger {
-    type Result = Result<DataLogEntry, DataLogError>;
+    type Result = ResponseFuture<Result<DataLogEntry, DataLogError>>;
 
     fn handle(&mut self, request: DataLogFetch, _: &mut Context<Self>) -> Self::Result {
         let mut log_path = self.data_dir.join(&request.data_log_id.to_string());
-        let res = match request.requested_datalog_entries {
-            Some(entries) => {
-                log_path.push("publications");
-                let mut read_results = Vec::new();
-                for item in entries {
-                    &log_path.push(item.to_string());
-                    let entry_file = OpenOptions::new().read(true).open(&log_path)?;
-                    read_results.push(serde_cbor::from_reader(&entry_file)?);
+        Box::pin(async move {
+            match request.requested_datalog_entries {
+                Some(entries) => {
+                    log_path.push("publications");
+                    let mut read_results = Vec::new();
+                    for item in entries {
+                        &log_path.push(item.to_string());
+                        let entry_file = OpenOptions::new().read(true).open(&log_path)?;
+                        read_results.push(serde_cbor::from_reader(&entry_file)?);
+                    }
+                    Ok(DataLogEntry::Publications(read_results))
                 }
-                DataLogEntry::Publications(read_results)
+                _ => {
+                    log_path.push("subscribers");
+                    let subscribers_file = OpenOptions::new().read(true).open(&log_path)?;
+                    Ok(DataLogEntry::Subscribers(serde_cbor::from_reader(
+                        &subscribers_file,
+                    )?))
+                }
             }
-            _ => {
-                log_path.push("subscribers");
-                let subscribers_file = OpenOptions::new().read(true).open(&log_path)?;
-                DataLogEntry::Subscribers(serde_cbor::from_reader(&subscribers_file)?)
-            }
-        };
-        Ok(res)
+        })
     }
 }
 
