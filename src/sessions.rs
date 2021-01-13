@@ -83,8 +83,8 @@ impl Handler<GetSessionAddr> for SessionService {
     type Result = Result<Addr<WebSocketSession>, SessionError>;
 
     fn handle(&mut self, msg: GetSessionAddr, _: &mut Context<Self>) -> Self::Result {
-        let res = self.get_session_addr(&msg.id);
-        Ok(*res?)
+        let res = self.get_session_addr(&msg.id)?;
+        Ok(res.clone())
     }
 }
 

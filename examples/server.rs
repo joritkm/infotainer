@@ -4,22 +4,24 @@ use std::path::PathBuf;
 use actix::prelude::Actor;
 use actix_web::{middleware, web, App, HttpServer};
 
-use infotainer::prelude::{websocket_handler, DataLogger, PubSubServer};
+use infotainer::prelude::*;
 
 #[actix_rt::main]
 async fn main() -> std::io::Result<()> {
     env_logger::init();
     let data_path = PathBuf::from("/tmp/infotainer-server-example");
+    let sessions = SessionService::new().start();
     create_dir_all(&data_path)?;
-    let data_logger_addr = DataLogger::new(&data_path)
+    let data_logger_addr = DataLogger::new(&data_path, &sessions.clone().recipient())
         .expect("Could not initiate DataLogger")
         .start();
-    let pubsub_server_addr = PubSubServer::new(Some(&data_logger_addr))
-        .expect("Could not initiate PubSubServer.")
-        .start();
+    let pubsub_server_addr =
+        PubSubService::new(&data_logger_addr, &sessions.clone().recipient()).start();
     HttpServer::new(move || {
         App::new()
             .data(pubsub_server_addr.clone())
+            .data(data_logger_addr.clone())
+            .data(sessions.clone())
             .wrap(middleware::Logger::default())
             .service(web::resource("/ws/{session_id}").route(web::get().to(websocket_handler)))
     })
