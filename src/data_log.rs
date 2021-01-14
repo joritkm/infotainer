@@ -273,89 +273,41 @@ impl From<&Publication> for DataLogEntry {
     }
 }
 
-//#[cfg(test)]
-//mod tests {
-//    use super::*;
-//    use std::env::temp_dir;
-//
-//    fn create_test_directory() -> PathBuf {
-//        let mut p = temp_dir();
-//        p.push(format!("infotainer-{}", Uuid::new_v4().to_hyphenated()));
-//        std::fs::create_dir(&p).unwrap();
-//        p
-//    }
-//
-//    fn remove_test_directory(p: &Path) {
-//        std::fs::remove_dir_all(p).unwrap();
-//    }
-//
-//    #[actix_rt::test]
-//    async fn test_starting_data_logger() {
-//        let test_data_dir = create_test_directory();
-//
-//        let data_logger = DataLogger::new(&test_data_dir).unwrap();
-//        let data_logger_actor = data_logger.clone().start();
-//
-//        assert_eq!(data_logger.data_dir, PathBuf::from(&test_data_dir));
-//        assert!(data_logger_actor.connected());
-//        remove_test_directory(&test_data_dir);
-//    }
-//
-//    #[actix_rt::test]
-//    async fn test_starting_data_logger_failure() {
-//        let test_data_dir = Path::new("/frank/nord");
-//        let data_logger = DataLogger::new(test_data_dir);
-//        assert!(data_logger.is_err());
-//    }
-//
-//    #[actix_rt::test]
-//    async fn test_data_log_item_entry() {
-//        let test_data_dir = create_test_directory();
-//        let dummy_data = (0..9).map(|_| Uuid::new_v4()).collect();
-//        let test_write_request = DataLogPut {
-//            data_log_id: Uuid::new_v4(),
-//            data_log_entry: DataLogEntry::Subscribers(dummy_data),
-//        };
-//        let test_read_request = DataLogFetch {
-//            data_log_id: test_write_request.data_log_id,
-//            requested_datalog_entries: None,
-//        };
-//
-//        let data_logger = DataLogger::new(&test_data_dir).unwrap();
-//        let data_logger_actor = data_logger.start();
-//
-//        let write_result = data_logger_actor.send(test_write_request).await;
-//        let read_result = data_logger_actor.send(test_read_request).await;
-//        assert!(write_result.is_ok());
-//        assert!(read_result.is_ok());
-//        remove_test_directory(&test_data_dir);
-//    }
-//
-//    #[actix_rt::test]
-//    async fn test_data_log_collection_item_entry() {
-//        let test_data_dir = create_test_directory();
-//        let dummy_subscription_id = Uuid::new_v4();
-//        let dummy_data = Publication {
-//            publication_id: Uuid::new_v4(),
-//            subscription_id: dummy_subscription_id.clone(),
-//            data: "Test".as_bytes().to_owned(),
-//        };
-//        let test_write_request = DataLogPut {
-//            data_log_id: Uuid::new_v4(),
-//            data_log_entry: DataLogEntry::Publications(vec![dummy_data.clone()]),
-//        };
-//        let test_read_request = DataLogFetch {
-//            data_log_id: test_write_request.data_log_id,
-//            requested_datalog_entries: Some(vec![dummy_data.publication_id]),
-//        };
-//
-//        let data_logger = DataLogger::new(&test_data_dir).unwrap();
-//        let data_logger_actor = data_logger.start();
-//
-//        let write_result = data_logger_actor.send(test_write_request).await;
-//        let read_result = data_logger_actor.send(test_read_request).await;
-//        assert!(write_result.unwrap().is_ok());
-//        assert!(read_result.unwrap().is_ok());
-//        remove_test_directory(&test_data_dir);
-//    }
-//}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env::temp_dir;
+
+    use crate::prelude::SessionService;
+
+    fn create_test_directory() -> PathBuf {
+        let mut p = temp_dir();
+        p.push(format!("infotainer-{}", Uuid::new_v4().to_hyphenated()));
+        std::fs::create_dir(&p).unwrap();
+        p
+    }
+
+    fn remove_test_directory(p: &Path) {
+        std::fs::remove_dir_all(p).unwrap();
+    }
+
+    #[actix_rt::test]
+    async fn test_starting_data_logger() {
+        let test_data_dir = create_test_directory();
+        let sessions = SessionService::new().start();
+        let data_logger = DataLogger::new(&test_data_dir, &sessions.clone().recipient()).unwrap();
+        let data_logger_actor = data_logger.clone().start();
+
+        assert_eq!(data_logger.data_dir, PathBuf::from(&test_data_dir));
+        assert!(data_logger_actor.connected());
+        remove_test_directory(&test_data_dir);
+    }
+
+    #[actix_rt::test]
+    async fn test_starting_data_logger_failure() {
+        let test_data_dir = Path::new("/frank/nord");
+        let sessions = SessionService::new().start();
+        let data_logger = DataLogger::new(test_data_dir, &sessions.clone().recipient());
+        assert!(data_logger.is_err());
+    }
+}
