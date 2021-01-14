@@ -366,7 +366,10 @@ pub mod tests {
         let mut publication_data = Vec::new();
         match conn.next().await.unwrap().unwrap() {
             ws::Frame::Binary(a) => {
-                publication_data = serde_cbor::from_slice::<ServerMessage<Publication>>(&a[..]).unwrap().0.data;
+                publication_data = serde_cbor::from_slice::<ServerMessage<Publication>>(&a[..])
+                    .unwrap()
+                    .0
+                    .data;
             }
             _ => (),
         };
