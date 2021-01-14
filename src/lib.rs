@@ -40,6 +40,7 @@ pub mod prelude {
     pub use crate::pubsub::PubSubService;
     pub use crate::sessions::SessionService;
     pub use crate::websocket::websocket_handler;
+    pub use crate::websocket::ClientCommand;
 }
 use std::collections::HashSet;
 
