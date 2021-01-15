@@ -3,6 +3,11 @@ name = "infotainer"
 version = "0.0.1"
 authors = ["joppich <joppich@bricknet.de>"]
 edition = "2018"
+license = "MIT"
+repository = "https://github.com/joppich/infotainer"
+description = "building blocks for simple pubsub services"
+readme = "README.md"
+
 
 [lib]
 name = "infotainer"
