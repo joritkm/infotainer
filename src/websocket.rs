@@ -17,7 +17,7 @@ use crate::{
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Represents errors caused by client interaction
+/// Represents errors caused during client interaction
 #[derive(Debug, Fail, PartialEq, Clone, Serialize, Deserialize)]
 pub enum ClientError {
     #[fail(display = "Invalid Input: {}", _0)]
@@ -36,7 +36,7 @@ impl From<uuid::Error> for ClientError {
     }
 }
 
-///Perform ws-handshake and create the socket.
+/// Start a new WebSocketSession for the requesting client and start the actor.
 pub async fn websocket_handler(
     req: web::HttpRequest,
     stream: web::Payload,
@@ -54,7 +54,7 @@ pub async fn websocket_handler(
     ws::start(websocket_session, &req, stream)
 }
 
-///Run websocket via actor, track alivenes of clients
+/// The actor responsible handling client-server communication.
 #[derive(Debug, Clone)]
 pub struct WebSocketSession {
     id: Uuid,
@@ -95,8 +95,8 @@ impl WebSocketSession {
 impl Actor for WebSocketSession {
     type Context = ws::WebsocketContext<Self>;
 
-    /// On start of actor begin monitoring heartbeat and create
-    /// a session on the `PubSubServer`
+    // On start of actor begin monitoring heartbeat and create
+    // a session on the `PubSubServer`
     fn started(&mut self, ctx: &mut Self::Context) {
         info!("Starting WebSocketSession for {}", self.id);
         self.beat(ctx);
@@ -109,6 +109,7 @@ impl Actor for WebSocketSession {
         }
     }
 
+    // Unregister with SessionService when stopping the actor
     fn stopping(&mut self, _: &mut Self::Context) -> Running {
         info!("Stopping WebSocketSession for {}", self.id);
         self.sessions.do_send(RemoveSession::from(&self.id));
@@ -116,6 +117,7 @@ impl Actor for WebSocketSession {
     }
 }
 
+// Handles publication messages sent by the server
 impl Handler<ServerMessage<Publication>> for WebSocketSession {
     type Result = Result<(), ClientError>;
 
@@ -129,6 +131,7 @@ impl Handler<ServerMessage<Publication>> for WebSocketSession {
     }
 }
 
+// Handles log indices sent by the server
 impl Handler<ServerMessage<HashSet<Uuid>>> for WebSocketSession {
     type Result = Result<(), ClientError>;
 
@@ -141,6 +144,7 @@ impl Handler<ServerMessage<HashSet<Uuid>>> for WebSocketSession {
     }
 }
 
+// Handles DataLogEntries sent by the server
 impl Handler<ServerMessage<DataLogEntry>> for WebSocketSession {
     type Result = Result<(), ClientError>;
 
@@ -153,6 +157,7 @@ impl Handler<ServerMessage<DataLogEntry>> for WebSocketSession {
     }
 }
 
+// Handles incoming websocket messages sent by clients
 impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession {
     fn handle(&mut self, msg: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
         trace!("Message received: {:#?}", &msg);
@@ -252,7 +257,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
     }
 }
 
-/// Represents a command from a connected client
+/// Represents a message from a client sent to the websocket. 
 #[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
 pub enum ClientCommand {
     /// Retrieve a Subscriptions log index

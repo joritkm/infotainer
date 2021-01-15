@@ -11,6 +11,7 @@ use crate::{
     websocket::ClientError,
 };
 
+/// Represents errors caused during interaction with the PubSubService actor
 #[derive(Debug, Fail, PartialEq, Clone, Serialize, Deserialize)]
 pub enum PublicationError {
     #[fail(display = "Could not log publication to the data log: {}", _0)]
@@ -32,6 +33,7 @@ impl From<SessionError> for PublicationError {
     }
 }
 
+/// A message to add or remove a client id from a subscription
 #[derive(Debug, Clone, Message)]
 #[rtype("Result<(), PublicationError>")]
 pub enum ManageSubscription {
@@ -47,6 +49,7 @@ pub enum ManageSubscription {
     },
 }
 
+/// Represents data submitted by the client for publication to a Subscription.
 #[derive(Debug, Clone, Message)]
 #[rtype(result = "Result<(), PublicationError>")]
 pub struct SubmitCommand {
