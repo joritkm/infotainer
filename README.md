@@ -1,6 +1,6 @@
 # WIP: infotainer
 
-![Rust](https://github.com/joppich/infotainer/workflows/Rust/badge.svg)
+![Test](https://github.com/joppich/infotainer/workflows/Rust/badge.svg)
 [![codecov](https://codecov.io/gh/joppich/infotainer/branch/master/graph/badge.svg)](https://codecov.io/gh/joppich/infotainer)
 
 Infotainer contains building blocks for simple pubsub services based on actix/-web, cbor and websockets.
