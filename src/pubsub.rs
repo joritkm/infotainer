@@ -1,15 +1,13 @@
 use std::collections::{HashMap, HashSet};
 
-use actix::prelude::{Actor, Addr, Context, Handler, Message, Recipient, ResponseFuture};
+use actix::{
+    prelude::{Actor, Context, Handler, Message},
+    Addr,
+};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{
-    data_log::{DataLogEntry, DataLogPut, DataLogger},
-    prelude::ServerMessage,
-    sessions::{GetSessionAddr, SessionError},
-    websocket::ClientError,
-};
+use crate::websocket::WebSocketSession;
 
 /// Represents errors caused during interaction with the PubSubService actor
 #[derive(Debug, Fail, PartialEq, Clone, Serialize, Deserialize)]
@@ -24,17 +22,24 @@ pub enum PublicationError {
     Publishing(String),
 
     #[fail(display = "Error while handling subscriptions: {}", _0)]
-    Subscribing(String),
+    Subscriptions(&'static str),
 }
 
-impl From<SessionError> for PublicationError {
-    fn from(e: SessionError) -> Self {
-        Self::SessionService(format!("{}", e))
-    }
+/// A message to register a websocket session with the pubsub service
+#[derive(Debug, Message)]
+#[rtype("Result<(), PublicationError>")]
+pub enum ManageSession {
+    /// Add [Addr] of clients [WebsocketSession] to [PubSubService.sessions]
+    Add {
+        client_id: Uuid,
+        addr: Addr<WebSocketSession>,
+    },
+    /// Remove websocket session from [PubSubService.sessions]
+    Remove { client_id: Uuid },
 }
 
 /// A message to add or remove a client id from a subscription
-#[derive(Debug, Clone, Message)]
+#[derive(Debug, Message)]
 #[rtype("Result<(), PublicationError>")]
 pub enum ManageSubscription {
     /// Add client to a Subscription, creating it, if it doesn't exist
@@ -49,8 +54,8 @@ pub enum ManageSubscription {
     },
 }
 
-/// Represents data submitted by the client for publication to a Subscription.
-#[derive(Debug, Clone, Message)]
+/// A message to submit data for publishing
+#[derive(Debug, Message)]
 #[rtype(result = "Result<(), PublicationError>")]
 pub struct SubmitCommand {
     client_id: Uuid,
@@ -68,19 +73,47 @@ impl SubmitCommand {
     }
 }
 
+/// A message informing clients about newly submitted publications
+#[derive(Debug, Deserialize, Message, Serialize)]
+#[rtype("Result<(), PublicationError>")]
+pub struct Issue(pub Uuid, pub Uuid);
+
 /// The actor managing `Subscriptions` and handling dissemination of `Publication`s.
 /// Holds a list of currently connected sessions and a `Subscription` store.
 #[derive(Debug, Clone)]
 pub struct PubSubService {
-    /// The subscription store
     subscriptions: Subscriptions,
-    sessions: Recipient<GetSessionAddr>,
-    /// An optionally available connection to a DataLogger actor
-    datalog: Addr<DataLogger>,
+    sessions: HashMap<Uuid, Addr<WebSocketSession>>,
+}
+
+impl PubSubService {
+    /// Creates a new `PubSubService` actor.
+    pub fn new() -> Self {
+        let subs = Subscriptions::new();
+        PubSubService {
+            subscriptions: subs,
+            sessions: HashMap::new(),
+        }
+    }
 }
 
 impl Actor for PubSubService {
     type Context = Context<Self>;
+}
+
+impl Handler<ManageSession> for PubSubService {
+    type Result = Result<(), PublicationError>;
+
+    fn handle(&mut self, msg: ManageSession, _: &mut Self::Context) -> Self::Result {
+        Ok(match msg {
+            ManageSession::Add { client_id, addr } => {
+                self.sessions.insert(client_id, addr);
+            }
+            ManageSession::Remove { client_id } => {
+                self.sessions.remove(&client_id);
+            }
+        })
+    }
 }
 
 impl Handler<ManageSubscription> for PubSubService {
@@ -118,82 +151,35 @@ impl Handler<ManageSubscription> for PubSubService {
                     "Handling SubscriptionCommand::Remove for {} with param {}",
                     &client_id, &subscription_id
                 );
-                match self.subscriptions.fetch(&subscription_id) {
-                    Ok(mut s) => {
-                        s.remove_subscriber(&client_id);
-                        Ok(if s.subscribers.is_empty() {
-                            self.subscriptions.remove(&subscription_id)
-                        } else {
-                            self.subscriptions.update(&s)
-                        })
-                    }
-                    Err(e) => {
-                        warn!("Could not remove subscription for {}, {}", &client_id, e);
-                        Err(PublicationError::Subscribing(format!(
-                            "Could not remove subscription {}",
-                            e
-                        )))
-                    }
-                }
+                let mut s = self.subscriptions.fetch(&subscription_id)?;
+                s.remove_subscriber(&client_id);
+                Ok(if s.subscribers.is_empty() {
+                    self.subscriptions.remove(&subscription_id)
+                } else {
+                    self.subscriptions.update(&s)
+                })
             }
         }
     }
 }
 
 impl Handler<SubmitCommand> for PubSubService {
-    type Result = ResponseFuture<Result<(), PublicationError>>;
+    type Result = Result<(), PublicationError>;
 
-    fn handle(&mut self, subcmd: SubmitCommand, _: &mut Context<Self>) -> Self::Result {
-        debug!(" {} submitted {:?}", subcmd.client_id, subcmd.submission);
-        match self.subscriptions.fetch(&subcmd.subscription_id) {
-            Ok(sub) => {
-                let publication = Publication::new(&subcmd.subscription_id, &subcmd.submission);
-                let session_service = self.sessions.clone();
-                let data_log_service = self.datalog.clone();
-                let issue = ServerMessage::from(&publication);
-                info!("Distributing new publication for subscription {}", sub.id);
-                Box::pin(async move {
-                    debug!("Logging publication for Subscription {}", &sub.id);
-                    data_log_service
-                        .try_send(DataLogPut::new(&sub.id, DataLogEntry::from(&publication)))
-                        .map_err(|e| PublicationError::DataLoggingError(format!("{}", e)))?;
-                    for s in sub.subscribers {
-                        if let Ok(session_result) =
-                            session_service.send(GetSessionAddr::from(&s)).await
-                        {
-                            if let Ok(recipient) = session_result {
-                                if let Ok(publishing_result) = recipient.send(issue.clone()).await {
-                                    if let Err(e) = publishing_result {
-                                        error!(
-                                            "Error while delivering Publication to {}: {}",
-                                            &s, e
-                                        );
-                                    }
-                                } else {
-                                    error!("Error while sending publication to client {}", &s);
-                                }
-                            } else {
-                                error!("Error retrieving session for client {}", &s);
-                            }
-                        }
+    fn handle(&mut self, msg: SubmitCommand, _: &mut Context<Self>) -> Self::Result {
+        debug!(" {} submitted {:?}", msg.client_id, msg.submission);
+        Ok(
+            if let Ok(subscription) = self.subscriptions.fetch(&msg.subscription_id) {
+                let publication = Publication::new(&msg.subscription_id, &msg.submission);
+                for s in subscription.subscribers {
+                    if let Some(recipient) = self.sessions.get(&s) {
+                        recipient
+                            .try_send(Issue(subscription.id, publication.publication_id))
+                            .map_err(|e| PublicationError::Publishing(e.to_string()))?;
                     }
-                    Ok(())
-                })
-            }
-            Err(e) => Box::pin(async move { Err(PublicationError::Publishing(format!("{}", e))) }),
-        }
-    }
-}
-
-impl PubSubService {
-    /// Creates a new `PubSubService` actor.
-    pub fn new(datalog: &Addr<DataLogger>, sessions: &Recipient<GetSessionAddr>) -> Self {
-        let subs = Subscriptions::new();
-        PubSubService {
-            subscriptions: subs,
-            sessions: sessions.clone(),
-            datalog: datalog.clone(),
-        }
+                }
+            },
+        )
     }
 }
 
@@ -215,20 +201,13 @@ impl Publication {
     }
 }
 
-///Holds Subscription specific information
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-pub struct SubscriptionMeta {
-    /// The name of the subscription
-    pub name: String,
-}
-
 /// Represents an entry in `crate::subscription::Subscriptions`
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct Subscription {
-    /// Identifier, corresponds to the id of the creating client
+    /// Unique identifier
     pub id: Uuid,
-    /// Metadata represented by `SubscriptionMeta`
-    pub metadata: SubscriptionMeta,
+    /// Descriptive name
+    pub name: String,
     /// List of currently subscribed clients
     pub subscribers: Vec<Uuid>,
 }
@@ -236,12 +215,9 @@ pub struct Subscription {
 impl Subscription {
     /// Generates metadata and creates a new `Subscription`
     pub fn new(id: &Uuid, name: &str) -> Subscription {
-        let meta = SubscriptionMeta {
-            name: name.to_owned(),
-        };
         Subscription {
             id: *id,
-            metadata: meta,
+            name: name.to_owned(),
             subscribers: Vec::new(),
         }
     }
@@ -283,12 +259,11 @@ impl Subscriptions {
     }
 
     /// Attempts to retrieve a `crate::subscription::Subscription` from the subscription store
-    pub fn fetch(&self, id: &Uuid) -> Result<Subscription, ClientError> {
-        if let Some(sub) = self.store.get_key_value(id) {
-            Ok(sub.1.clone())
-        } else {
-            Err(ClientError::InvalidInput(String::from("No such entry")))
-        }
+    pub fn fetch(&self, id: &Uuid) -> Result<Subscription, PublicationError> {
+        self.store
+            .get(id)
+            .ok_or(PublicationError::Subscriptions("Subscription not found"))
+            .and_then(|s| Ok(s.to_owned()))
     }
 
     /// Removes a subscription from the subscription store
@@ -315,13 +290,6 @@ pub mod tests {
     fn test_subscription() {
         let dummy_client = Uuid::new_v4();
         let mut dummy_subscription = Subscription::new(&dummy_client, "Test Subscription");
-
-        assert_eq!(
-            dummy_subscription.metadata,
-            SubscriptionMeta {
-                name: String::from("Test Subscription")
-            }
-        );
 
         dummy_subscription.append_subscriber(&dummy_client);
         assert!(dummy_subscription.subscribers.contains(&dummy_client));
