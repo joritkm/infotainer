@@ -15,7 +15,7 @@ async fn main() -> std::io::Result<()> {
     let data_logger_addr = DataLogger::new(&data_path)
         .expect("Could not initiate DataLogger")
         .start();
-    let pubsub_server_addr = PubSubService::new().start();
+    let pubsub_server_addr = PubSubService::new(&&data_logger_addr).start();
     HttpServer::new(move || {
         App::new()
             .data(pubsub_server_addr.clone())

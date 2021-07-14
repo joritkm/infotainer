@@ -298,11 +298,10 @@ pub mod tests {
         let test_dir = create_test_directory();
         let sessions = SessionService::new().start();
         let data_log = DataLogger::new(&test_dir).unwrap().start();
-        let pubsub_server = PubSubService::new().start();
+        let pubsub_server = PubSubService::new(&data_log).start();
         let session_id = Uuid::new_v4();
         let subscription_id = Uuid::new_v4();
-        let test_submission_data =
-            serde_cbor::to_vec(&String::from("Milton Beats <Giver of Beatings>")).unwrap();
+        let test_data_text = "Milton Beats <Giver of Beatings>";
         let mut srv = test::start(move || {
             App::new()
                 .data(pubsub_server.clone())
@@ -327,14 +326,9 @@ pub mod tests {
             ))
             .await
             .unwrap();
-        let sub_response = match conn.next().await.unwrap().unwrap() {
-            ws::Frame::Binary(a) => Some(serde_cbor::from_slice::<String>(&a[..]).unwrap()),
-            _ => None,
-        };
-        assert_eq!(sub_response, None);
         let pub_message = ClientCommand::SubmitPublication {
             subscription_id: subscription_id,
-            submission: test_submission_data.clone(),
+            submission: test_data_text.into(),
         };
         &conn
             .send(ws::Message::Binary(
@@ -345,9 +339,16 @@ pub mod tests {
             ))
             .await
             .unwrap();
-        let published_issue = match conn.next().await.unwrap().unwrap() {
-            ws::Frame::Binary(a) => serde_cbor::from_slice::<Issue>(&a[..]).unwrap(),
-            _ => panic!("No Issue in responses"),
+        let issue_server_message = match conn.next().await.unwrap().unwrap() {
+            ws::Frame::Binary(a) => serde_cbor::from_slice::<ServerMessage>(&a[..]).unwrap(),
+            _ => panic!("Could not parse response")
+        };
+        let published_issue = match issue_server_message {
+            ServerMessage::Issue(i) => {
+                assert_eq!(i.0, subscription_id);
+                i
+            },
+            _ => panic!("Received unexpected response: {:?}", issue_server_message)
         };
         let log_message = ClientCommand::GetLogIndex {
             log_id: subscription_id,
@@ -364,7 +365,12 @@ pub mod tests {
         let mut log_response = HashSet::new();
         match conn.next().await.unwrap().unwrap() {
             ws::Frame::Binary(a) => {
-                log_response = serde_cbor::from_slice::<LogIndexPut>(&a[..]).unwrap().1;
+                match serde_cbor::from_slice::<ServerMessage>(&a[..]).unwrap() {
+                    ServerMessage::LogIndex(i) => {
+                        log_response = i.1
+                    },
+                    _ => panic!("Received invalid response from server")
+                }
             }
             _ => (),
         };
@@ -385,14 +391,18 @@ pub mod tests {
             .unwrap();
         let entry_response = match conn.next().await.unwrap().unwrap() {
             ws::Frame::Binary(a) => {
-                serde_cbor::from_slice::<DataLogPut<Publication>>(&a[..])
+                serde_cbor::from_slice::<ServerMessage>(&a[..])
                     .unwrap()
-                    .0
             }
-            _ => panic!("No datalog put message received"),
+            _ => panic!("Received invalid server response"),
         };
-        assert!(!entry_response.is_empty());
-        assert_eq!(entry_response[0].data, test_submission_data);
+        let data_log_entry = match entry_response {
+            ServerMessage::LogEntry(e) => {
+                e[0].clone()
+            },
+            _ => panic!("Unexpected server message")
+        };
+        assert_eq!(String::from_utf8(data_log_entry.data).unwrap(), test_data_text);
         let unsub_message = ClientCommand::Unsubscribe {
             subscription_id: subscription_id,
         };
