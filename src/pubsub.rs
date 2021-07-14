@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use actix::{
     prelude::{Actor, Context, Handler, Message},
@@ -283,16 +283,6 @@ impl Subscriptions {
     pub fn remove(&mut self, id: &Uuid) {
         self.store.remove(id);
     }
-}
-
-/// Represents data sent by the server in response to a ClientRequest
-#[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
-pub enum Response {
-    List { data: Vec<Uuid> },
-    Add { data: Uuid },
-    Get { data: HashSet<Uuid> },
-    Remove { data: Uuid },
-    Empty,
 }
 
 #[cfg(test)]

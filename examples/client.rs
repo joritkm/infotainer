@@ -16,7 +16,7 @@ use awc::{
     BoxedSocket,
 };
 use futures::{stream::SplitSink, StreamExt};
-use infotainer::prelude::*;
+use infotainer::{websocket::{ClientCommand, ServerMessage}};
 use itertools::Itertools;
 use uuid::Uuid;
 

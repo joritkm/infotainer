@@ -8,14 +8,21 @@ use uuid::Uuid;
 
 use crate::data_log::LogIndexPut;
 use crate::pubsub::ManageSession;
-use crate::ServerMessage;
 use crate::{
     data_log::{DataLogError, DataLogPull, DataLogPut, DataLogger, LogIndexPull},
     pubsub::{
         Issue, ManageSubscription, PubSubService, Publication, PublicationError, SubmitCommand,
-    },
-    sessions::SessionService,
+    }
 };
+
+
+/// Represents a message sent by the server to a connected client
+#[derive(Debug, Serialize, Deserialize)]
+pub enum ServerMessage {
+    Issue(Issue),
+    LogIndex(LogIndexPut),
+    LogEntry(Vec<Publication>),
+}
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -44,13 +51,11 @@ pub async fn websocket_handler(
     req: web::HttpRequest,
     stream: web::Payload,
     session_id: web::Path<Uuid>,
-    sessions: web::Data<Addr<SessionService>>,
     pubsub: web::Data<Addr<PubSubService>>,
     datalog: web::Data<Addr<DataLogger>>,
 ) -> Result<web::HttpResponse, error::Error> {
     let websocket_session = WebSocketSession::new(
         pubsub.get_ref(),
-        sessions.get_ref(),
         datalog.get_ref(),
         &session_id,
     );
@@ -62,7 +67,6 @@ pub async fn websocket_handler(
 pub struct WebSocketSession {
     id: Uuid,
     hb: Instant,
-    sessions: Addr<SessionService>,
     pubsub: Addr<PubSubService>,
     datalog: Addr<DataLogger>,
 }
@@ -70,14 +74,12 @@ pub struct WebSocketSession {
 impl WebSocketSession {
     fn new(
         pubsub: &Addr<PubSubService>,
-        sessions: &Addr<SessionService>,
         datalog: &Addr<DataLogger>,
         client_id: &Uuid,
     ) -> WebSocketSession {
         WebSocketSession {
             id: *client_id,
             hb: Instant::now(),
-            sessions: sessions.clone(),
             pubsub: pubsub.clone(),
             datalog: datalog.clone(),
         }
@@ -293,7 +295,6 @@ pub mod tests {
     #[actix_rt::test]
     async fn test_websocket_pubsub_datalog_integration() {
         let test_dir = create_test_directory();
-        let sessions = SessionService::new().start();
         let data_log = DataLogger::new(&test_dir).unwrap().start();
         let pubsub_server = PubSubService::new(&data_log).start();
         let session_id = Uuid::new_v4();
@@ -303,7 +304,6 @@ pub mod tests {
             App::new()
                 .data(pubsub_server.clone())
                 .data(data_log.clone())
-                .data(sessions.clone())
                 .route("/{session_id}", web::get().to(websocket_handler))
         });
         let mut conn = srv

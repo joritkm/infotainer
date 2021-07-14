@@ -29,27 +29,6 @@ extern crate log;
 #[macro_use]
 extern crate failure;
 
-mod data_log;
-mod pubsub;
-mod sessions;
-mod websocket;
-
-pub mod prelude {
-    pub use super::data_log::{DataLogPut, DataLogger};
-    pub use super::pubsub::{Issue, PubSubService};
-    pub use super::sessions::SessionService;
-    pub use super::websocket::{websocket_handler, ClientCommand};
-    pub use super::ServerMessage;
-}
-
-use data_log::LogIndexPut;
-use pubsub::Publication;
-use serde::{Deserialize, Serialize};
-
-/// Represents a message sent by the server to a connected client
-#[derive(Debug, Serialize, Deserialize)]
-pub enum ServerMessage {
-    Issue(prelude::Issue),
-    LogIndex(LogIndexPut),
-    LogEntry(Vec<Publication>),
-}
+pub mod data_log;
+pub mod pubsub;
+pub mod websocket;
