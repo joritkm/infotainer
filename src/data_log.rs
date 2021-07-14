@@ -1,37 +1,39 @@
-use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
-use std::fs::{create_dir, create_dir_all, OpenOptions};
+use std::fs::{create_dir_all, read_dir, DirEntry, OpenOptions};
 use std::path::{Path, PathBuf};
-
-use actix::prelude::{
-    Actor, ActorFuture, Addr, Context, Handler, Message, Recipient, ResponseActFuture,
-    ResponseFuture, SendError, WrapFuture,
+use std::{
+    collections::{HashMap, HashSet},
+    str::FromStr,
 };
+
+use actix::prelude::{Actor, Context, Handler, Message, Recipient, SendError};
 use faccess::{AccessMode, PathExt};
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{
-    prelude::ServerMessage, pubsub::Publication, sessions::GetSessionAddr,
-    websocket::WebSocketSession,
-};
+use crate::pubsub::{Publication, Subscription};
 
-#[derive(Debug, Fail, PartialEq, Clone, Serialize, Deserialize)]
+pub type DataLogIndex = HashMap<Uuid, HashSet<Uuid>>;
+
+#[derive(Debug, Fail)]
 pub enum DataLogError {
-    #[fail(display = "Encountered error during file system interaction: {}", _0)]
+    #[fail(display = "Fs error: {}", _0)]
     FileSystem(String),
 
-    #[fail(display = "Failed during message handling: {}", _0)]
-    DataLogRequest(String),
+    #[fail(display = "Failed sending index: {:?}", _0)]
+    PullIndex(#[cause] SendError<LogIndexPut>),
 
-    #[fail(display = "Could not serialize data for writing to disk: {}", _0)]
-    SerializerError(String),
-}
+    #[fail(display = "Failed sending log entries: {:?}", _0)]
+    PullDataLogEntry(#[cause] SendError<DataLogPut<Publication>>),
 
-impl From<SendError<DataLogPut>> for DataLogError {
-    fn from(e: SendError<DataLogPut>) -> DataLogError {
-        DataLogError::DataLogRequest(format!("{}", e))
-    }
+    #[fail(display = "Could not process DataLogPut: {}", _0)]
+    PutDataLogEntry(#[cause] serde_cbor::Error),
+
+    #[fail(display = "Could not write data: {:?}", _0)]
+    WriteError(#[cause] serde_cbor::Error),
+
+    #[fail(display = "Could not read data: {:?}", _0)]
+    ReadError(#[cause] serde_cbor::Error),
 }
 
 impl From<std::io::Error> for DataLogError {
@@ -40,99 +42,129 @@ impl From<std::io::Error> for DataLogError {
     }
 }
 
-impl From<serde_cbor::Error> for DataLogError {
-    fn from(e: serde_cbor::Error) -> DataLogError {
-        DataLogError::SerializerError(format!("{}", e))
-    }
-}
-
-/// Represents a request for writing contained data
-#[derive(Debug, Message)]
-#[rtype("Result<(), DataLogError>")]
-pub struct DataLogPut {
-    data_log_id: Uuid,
-    data_log_entry: DataLogEntry,
-}
-
-impl DataLogPut {
-    /// Creates a new DataLogPut request from a Uuid and a DataLogEntry
-    pub fn new(log_id: &Uuid, entry: DataLogEntry) -> DataLogPut {
-        DataLogPut {
-            data_log_id: *log_id,
-            data_log_entry: entry,
-        }
-    }
-}
-
 /// A message to request a range of entries from a log collection
 #[derive(Debug, Message)]
 #[rtype("Result<(), DataLogError>")]
-pub struct DataLogFetch {
-    client_id: Uuid,
-    data_log_id: Uuid,
-    requested_datalog_entries: Vec<Uuid>,
+pub struct DataLogPull {
+    pub data_log_id: Uuid,
+    pub client: Recipient<DataLogPut<Publication>>,
+    pub selection: Vec<Uuid>,
 }
 
-impl DataLogFetch {
-    /// Creates a new DataLogFetch request from a Uuid and an optional array of Uuids.
-    pub fn new(client_id: &Uuid, subscription_id: &Uuid, entries: &Vec<Uuid>) -> Self {
-        DataLogFetch {
-            client_id: *client_id,
-            data_log_id: *subscription_id,
-            requested_datalog_entries: entries.clone(),
-        }
-    }
+/// A message to request collection metadata
+#[derive(Debug, Message)]
+#[rtype("Result<(), DataLogError>")]
+pub enum MetadataPull {
+    Single(Uuid),
+    All,
 }
 
 /// A message to request the data log index of a collection
 #[derive(Debug, Message)]
 #[rtype("Result<(), DataLogError>")]
-pub struct DataLogIndex {
-    client_id: Uuid,
-    data_log_id: Uuid,
+pub struct LogIndexPull {
+    pub client: Recipient<LogIndexPut>,
+    pub data_log_id: Uuid,
 }
 
-impl DataLogIndex {
-    pub fn new(client_id: &Uuid, data_log_id: &Uuid) -> Self {
-        DataLogIndex {
-            client_id: client_id.clone(),
-            data_log_id: data_log_id.clone(),
-        }
+/// Message type for one or more log entries
+#[derive(Debug, Deserialize, PartialEq, Message, Serialize)]
+#[rtype("Result<(), DataLogError>")]
+pub struct DataLogPut<T: Serialize>(pub Vec<T>);
+
+impl Into<Vec<Publication>> for DataLogPut<Publication> {
+    fn into(self) -> Vec<Publication> {
+        self.0
     }
 }
 
-/// The Actor responsible for executing DataLog requests sent by
+/// Message type for Metadata of a collection
+#[derive(Debug, PartialEq, Message)]
+#[rtype("Result<(), DataLogError>")]
+pub struct MetadataPut<T: Serialize + DeserializeOwned>(T);
+
+/// Message Type for sending collection index
+#[derive(Debug, Deserialize, PartialEq, Message, Serialize)]
+#[rtype("Result<(), DataLogError>")]
+pub struct LogIndexPut(Uuid, pub HashSet<Uuid>);
+
+/// The Actor responsible for processing DataLog requests sent by
 /// PubSubServer actors.
 #[derive(Debug, Clone)]
 pub struct DataLogger {
-    sessions: Recipient<GetSessionAddr>,
-    log_index: HashMap<Uuid, HashSet<Uuid>>,
+    log_index: DataLogIndex,
     data_dir: PathBuf,
 }
 
 impl DataLogger {
     ///Creates a new DataLogger actor
     ///## Arguments
-    ///* `data_dir_path` - The path to this DataLoggers data directory. Must exist and be accessible with rwx permissions.
-    pub fn new(
-        data_dir_path: &Path,
-        sessions: &Recipient<GetSessionAddr>,
-    ) -> Result<DataLogger, DataLogError> {
-        if data_dir_path
+    ///* `app_dir` - The application base directory. Must exist and be accessible with rwx permissions.
+    pub fn new(app_dir: &Path) -> Result<DataLogger, DataLogError> {
+        if app_dir
             .access(AccessMode::EXISTS | AccessMode::READ | AccessMode::WRITE | AccessMode::EXECUTE)
             .is_ok()
         {
-            create_dir_all(data_dir_path)?;
+            let data_dir_path = app_dir.join("data");
+            create_dir_all(&data_dir_path)?;
             Ok(DataLogger {
                 log_index: HashMap::new(),
-                sessions: sessions.clone(),
-                data_dir: PathBuf::from(data_dir_path),
+                data_dir: PathBuf::from(&data_dir_path),
             })
         } else {
             Err(DataLogError::FileSystem(format!(
-                "Could not access data directory with required permissions"
+                "Could not access application base directory with required permissions"
             )))
         }
+    }
+
+    fn get_collection_log_path(&self, data_log_id: &Uuid) -> PathBuf {
+        let mut path = self.data_dir.join(data_log_id.to_string());
+        path.push("log");
+        path
+    }
+
+    fn _list_entry_ids<P: AsRef<Path>, F: Fn(&DirEntry) -> bool>(
+        &self,
+        path: P,
+        condition: F,
+    ) -> Result<Vec<Uuid>, DataLogError> {
+        let mut results = Vec::new();
+        let entries = read_dir(path)?;
+        for entry in entries {
+            let dir_entry = entry?;
+            if condition(&dir_entry) {
+                if let Some(dir_name) = dir_entry.file_name().to_str() {
+                    if let Some(collection_id) = Uuid::from_str(dir_name).ok() {
+                        results.push(collection_id)
+                    }
+                }
+            }
+        }
+        Ok(results)
+    }
+
+    fn read_data_file<T: Serialize + DeserializeOwned>(
+        &self,
+        filename: &str,
+        path: &PathBuf,
+    ) -> Result<T, DataLogError> {
+        let file = OpenOptions::new().read(true).open(path.join(filename))?;
+        serde_cbor::from_reader(&file).map_err(|e| DataLogError::ReadError(e))
+    }
+
+    fn write_data_file<T: Serialize>(
+        &self,
+        filename: &str,
+        path: &PathBuf,
+        data: T,
+    ) -> Result<(), DataLogError> {
+        create_dir_all(path)?;
+        let file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(&path.join(filename))?;
+        serde_cbor::to_writer(file, &data).map_err(|e| DataLogError::WriteError(e))
     }
 }
 
@@ -140,136 +172,80 @@ impl Actor for DataLogger {
     type Context = Context<DataLogger>;
 }
 
-impl Handler<DataLogPut> for DataLogger {
+impl Handler<MetadataPull> for DataLogger {
     type Result = Result<(), DataLogError>;
 
-    fn handle(&mut self, request: DataLogPut, _: &mut Context<Self>) -> Self::Result {
-        let mut log_path = self.data_dir.join(&request.data_log_id.to_string());
-        Ok(match &request.data_log_entry {
-            DataLogEntry::Subscribers(subscribers) => {
-                create_dir(&log_path)?;
-                log_path.push("subscribers");
-                let subscribers_file = OpenOptions::new()
-                    .create(true)
-                    .write(true)
-                    .open(&log_path)?;
-                serde_cbor::to_writer(subscribers_file, &subscribers)?;
+    fn handle(&mut self, msg: MetadataPull, _: &mut Context<Self>) -> Self::Result {
+        Ok(match &msg {
+            MetadataPull::Single(subscription_id) => {
+                let log_path = self.data_dir.join(subscription_id.to_string());
+                self.read_data_file("metadata.cbor", &log_path)?;
             }
-            DataLogEntry::Publications(entries) => {
-                log_path.push("publications");
-                create_dir_all(&log_path)?;
-                for item in entries {
-                    &log_path.push(item.publication_id.to_string());
-                    let entry_file = OpenOptions::new()
-                        .create(true)
-                        .write(true)
-                        .open(&log_path)?;
-                    serde_cbor::to_writer(entry_file, &item)?;
-                    let log_index_entry = self
-                        .log_index
-                        .entry(request.data_log_id)
-                        .or_insert(HashSet::new());
-                    log_index_entry.insert(item.publication_id);
-                    &log_path.pop();
-                }
-            }
+            MetadataPull::All => {}
         })
     }
 }
 
-impl Handler<DataLogIndex> for DataLogger {
-    type Result = ResponseActFuture<Self, Result<(), DataLogError>>;
+impl Handler<MetadataPut<Subscription>> for DataLogger {
+    type Result = Result<(), DataLogError>;
 
-    fn handle(&mut self, request: DataLogIndex, _: &mut Context<Self>) -> Self::Result {
-        let session_service = self.sessions.clone();
-        let client = request.client_id;
-        let log_id = request.data_log_id;
-        Box::pin(
-            async move {
-                if let Ok(session_request) =
-                    session_service.send(GetSessionAddr::from(&client)).await
-                {
-                    if let Ok(recipient) = session_request {
-                        Some(recipient)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            }
-            .into_actor(self)
-            .map(move |res, act, _| {
-                if let Some(recipient) = res {
-                    if let Some(log_index) = act.log_index.get(&log_id) {
-                        match recipient.try_send(ServerMessage::from(log_index)) {
-                            Ok(send_result) => Ok(send_result),
-                            Err(e) => Err(DataLogError::DataLogRequest(format!("{}", e))),
-                        }
-                    } else {
-                        Err(DataLogError::DataLogRequest(format!("No such data log")))
-                    }
-                } else {
-                    Err(DataLogError::DataLogRequest(format!(
-                        "Could not retrieve retrieve recipient from session service."
-                    )))
-                }
-            }),
+    fn handle(&mut self, msg: MetadataPut<Subscription>, _: &mut Context<Self>) -> Self::Result {
+        let log_path = self.get_collection_log_path(&msg.0.id);
+        self.write_data_file("metadata.cbor", &log_path, &msg.0)
+    }
+}
+
+impl Handler<LogIndexPull> for DataLogger {
+    type Result = Result<(), DataLogError>;
+
+    fn handle(&mut self, msg: LogIndexPull, _: &mut Context<Self>) -> Self::Result {
+        Ok(
+            if let Some(log_index_entry) = self.log_index.get_key_value(&msg.data_log_id).clone() {
+                &msg.client
+                    .try_send(LogIndexPut(*log_index_entry.0, log_index_entry.1.clone()))
+                    .map_err(|e| DataLogError::PullIndex(e))?;
+            },
         )
     }
 }
 
-impl Handler<DataLogFetch> for DataLogger {
-    type Result = ResponseFuture<Result<(), DataLogError>>;
+impl Handler<DataLogPull> for DataLogger {
+    type Result = Result<(), DataLogError>;
 
-    fn handle(&mut self, request: DataLogFetch, _: &mut Context<Self>) -> Self::Result {
-        let mut log_path = self.data_dir.join(&request.data_log_id.to_string());
-        let session_service = self.sessions.clone();
-        let mut client_addr: Option<Addr<WebSocketSession>> = None;
-        Box::pin(async move {
-            if let Ok(session_request) = session_service
-                .send(GetSessionAddr::from(&request.client_id))
-                .await
-            {
-                if let Ok(recipient) = session_request {
-                    client_addr = Some(recipient);
-                }
-            }
-            &log_path.push("publications");
-            let mut read_results = Vec::new();
-            for item in request.requested_datalog_entries {
-                &log_path.push(item.to_string());
-                let entry_file = OpenOptions::new().read(true).open(&log_path)?;
-                read_results.push(serde_cbor::from_reader(&entry_file)?);
-                &log_path.pop();
-            }
-            if let Some(receiver) = client_addr {
-                if let Err(e) = receiver.try_send(ServerMessage::from(DataLogEntry::Publications(
-                    read_results,
-                ))) {
-                    Err(DataLogError::DataLogRequest(format!("{}", e)))
-                } else {
-                    Ok(())
-                }
-            } else {
-                Err(DataLogError::DataLogRequest(format!(
-                    "Could not retrieve recipient from session service"
-                )))
-            }
+    fn handle(&mut self, msg: DataLogPull, _: &mut Context<Self>) -> Self::Result {
+        let log_path = self.get_collection_log_path(&msg.data_log_id);
+        let mut read_results = Vec::new();
+        for item in msg.selection {
+            read_results.push(self.read_data_file(&item.to_string(), &log_path)?);
+        }
+        msg.client
+            .try_send(DataLogPut(read_results))
+            .map_err(|e| DataLogError::PullDataLogEntry(e))
+    }
+}
+
+impl Handler<DataLogPut<Publication>> for DataLogger {
+    type Result = Result<(), DataLogError>;
+
+    fn handle(&mut self, msg: DataLogPut<Publication>, _: &mut Context<Self>) -> Self::Result {
+        Ok(for item in msg.0 {
+            let log_path = self.get_collection_log_path(&item.subscription_id);
+            self.write_data_file(&item.publication_id.to_string(), &log_path, &item)?;
+            let log_index_entry = self
+                .log_index
+                .entry(item.subscription_id)
+                .or_insert(HashSet::new());
+            log_index_entry.insert(item.publication_id);
         })
     }
 }
 
-/// Holds data intended for writing. The variants indicate whether data should be held by a single file or by a file within a collection
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub enum DataLogEntry {
-    Publications(Vec<Publication>),
-    Subscribers(Vec<Uuid>),
-}
+impl Handler<LogIndexPut> for DataLogger {
+    type Result = Result<(), DataLogError>;
 
-impl From<&Publication> for DataLogEntry {
-    fn from(p: &Publication) -> DataLogEntry {
-        DataLogEntry::Publications(vec![p.clone()])
+    fn handle(&mut self, msg: LogIndexPut, _: &mut Context<Self>) -> Self::Result {
+        self.log_index.insert(msg.0, msg.1);
+        Ok(())
     }
 }
 
@@ -277,8 +253,6 @@ impl From<&Publication> for DataLogEntry {
 mod tests {
     use super::*;
     use std::env::temp_dir;
-
-    use crate::prelude::SessionService;
 
     fn create_test_directory() -> PathBuf {
         let mut p = temp_dir();
@@ -293,12 +267,12 @@ mod tests {
 
     #[actix_rt::test]
     async fn test_starting_data_logger() {
-        let test_data_dir = create_test_directory();
-        let sessions = SessionService::new().start();
-        let data_logger = DataLogger::new(&test_data_dir, &sessions.clone().recipient()).unwrap();
+        let test_dir = create_test_directory();
+        let data_logger = DataLogger::new(&test_dir).unwrap();
         let data_logger_actor = data_logger.clone().start();
-
-        assert_eq!(data_logger.data_dir, PathBuf::from(&test_data_dir));
+        let mut test_data_dir = PathBuf::from(&test_dir);
+        test_data_dir.push("data");
+        assert_eq!(data_logger.data_dir, test_data_dir);
         assert!(data_logger_actor.connected());
         remove_test_directory(&test_data_dir);
     }
@@ -306,8 +280,7 @@ mod tests {
     #[actix_rt::test]
     async fn test_starting_data_logger_failure() {
         let test_data_dir = Path::new("/frank/nord");
-        let sessions = SessionService::new().start();
-        let data_logger = DataLogger::new(test_data_dir, &sessions.clone().recipient());
+        let data_logger = DataLogger::new(test_data_dir);
         assert!(data_logger.is_err());
     }
 }

@@ -3,6 +3,8 @@
 ![Test](https://github.com/joppich/infotainer/workflows/Rust/badge.svg)
 [![codecov](https://codecov.io/gh/joppich/infotainer/branch/master/graph/badge.svg)](https://codecov.io/gh/joppich/infotainer)
 
+__Note__: At the moment, this project is intended for me to learn and implement stuff I'm interested in. It's not really of any practical use to anyone.
+
 Infotainer contains building blocks for simple pubsub services based on actix/-web, cbor and websockets.
 
 ## Components
@@ -36,3 +38,7 @@ The `SessionService` actor is a client registry, representing active sessions in
 - [ ] persisting/retrieval of subscription metadata
 - [ ] recreating server state from persisted data
 - [ ] client service
+
+## Is it any good?
+[yes](https://news.ycombinator.com/item?id=3067434)
+

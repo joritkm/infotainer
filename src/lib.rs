@@ -35,44 +35,21 @@ mod sessions;
 mod websocket;
 
 pub mod prelude {
+    pub use super::data_log::{DataLogPut, DataLogger};
+    pub use super::pubsub::{Issue, PubSubService};
+    pub use super::sessions::SessionService;
+    pub use super::websocket::{websocket_handler, ClientCommand};
     pub use super::ServerMessage;
-    pub use crate::data_log::DataLogger;
-    pub use crate::pubsub::PubSubService;
-    pub use crate::sessions::SessionService;
-    pub use crate::websocket::websocket_handler;
-    pub use crate::websocket::ClientCommand;
 }
-use std::collections::HashSet;
 
-use actix::prelude::Message;
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
-
-use data_log::DataLogEntry;
+use data_log::LogIndexPut;
 use pubsub::Publication;
-use websocket::ClientError;
+use serde::{Deserialize, Serialize};
 
 /// Represents a message sent by the server to a connected client
-#[derive(Debug, PartialEq, Clone, Message, Serialize, Deserialize)]
-#[rtype(result = "Result<(), ClientError>")]
-pub struct ServerMessage<T>(Box<T>)
-where
-    T: Serialize;
-
-impl From<&Publication> for ServerMessage<Publication> {
-    fn from(publication: &Publication) -> ServerMessage<Publication> {
-        ServerMessage(Box::new(publication.clone()))
-    }
-}
-
-impl From<DataLogEntry> for ServerMessage<DataLogEntry> {
-    fn from(entry: DataLogEntry) -> ServerMessage<DataLogEntry> {
-        ServerMessage(Box::new(entry))
-    }
-}
-
-impl From<&HashSet<Uuid>> for ServerMessage<HashSet<Uuid>> {
-    fn from(hashset: &HashSet<Uuid>) -> ServerMessage<HashSet<Uuid>> {
-        ServerMessage(Box::new(hashset.clone()))
-    }
+#[derive(Debug, Serialize, Deserialize)]
+pub enum ServerMessage {
+    Issue(prelude::Issue),
+    LogIndex(LogIndexPut),
+    LogEntry(Vec<Publication>)
 }

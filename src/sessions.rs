@@ -53,7 +53,7 @@ impl From<&Uuid> for GetSessionAddr {
     }
 }
 
-/// Stores currently active sessions. The WebSocketSession actor registers itself on startup by sending 
+/// Stores currently active sessions. The WebSocketSession actor registers itself on startup by sending
 /// its client's ID and its address.
 #[derive(Debug, PartialEq, Clone)]
 pub struct SessionService {

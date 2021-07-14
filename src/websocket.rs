@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use actix::prelude::{Actor, ActorContext, Addr, AsyncContext, Handler, Running, StreamHandler};
@@ -7,11 +6,15 @@ use actix_web_actors::ws;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::ServerMessage;
+use crate::data_log::LogIndexPut;
+use crate::pubsub::ManageSession;
 use crate::{
-    data_log::{DataLogEntry, DataLogFetch, DataLogIndex, DataLogger},
-    prelude::ServerMessage,
-    pubsub::{ManageSubscription, PubSubService, Publication, SubmitCommand},
-    sessions::{InsertSession, RemoveSession, SessionService},
+    data_log::{DataLogError, DataLogPull, DataLogPut, DataLogger, LogIndexPull},
+    pubsub::{
+        Issue, ManageSubscription, PubSubService, Publication, PublicationError, SubmitCommand,
+    },
+    sessions::SessionService,
 };
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
@@ -100,10 +103,10 @@ impl Actor for WebSocketSession {
     fn started(&mut self, ctx: &mut Self::Context) {
         info!("Starting WebSocketSession for {}", self.id);
         self.beat(ctx);
-        if let Err(e) = self
-            .sessions
-            .try_send(InsertSession::new(&self.id, &ctx.address()))
-        {
+        if let Err(e) = self.pubsub.try_send(ManageSession::Add {
+            client_id: self.id,
+            addr: ctx.address(),
+        }) {
             error!("{}", e);
             ctx.stop()
         }
@@ -112,48 +115,45 @@ impl Actor for WebSocketSession {
     // Unregister with SessionService when stopping the actor
     fn stopping(&mut self, _: &mut Self::Context) -> Running {
         info!("Stopping WebSocketSession for {}", self.id);
-        self.sessions.do_send(RemoveSession::from(&self.id));
+        self.pubsub
+            .do_send(ManageSession::Remove { client_id: self.id });
         Running::Stop
     }
 }
 
 // Handles publication messages sent by the server
-impl Handler<ServerMessage<Publication>> for WebSocketSession {
-    type Result = Result<(), ClientError>;
+impl Handler<Issue> for WebSocketSession {
+    type Result = Result<(), PublicationError>;
 
-    fn handle(
-        &mut self,
-        publication: ServerMessage<Publication>,
-        ctx: &mut Self::Context,
-    ) -> Self::Result {
-        debug!("Received {:?} for {}", publication, self.id);
-        Ok(ctx.binary(serde_cbor::to_vec(&publication)?))
+    fn handle(&mut self, msg: Issue, ctx: &mut Self::Context) -> Self::Result {
+        debug!("Received {:?} for {}", msg, self.id);
+        let msg = ServerMessage::Issue(msg);
+        Ok(ctx.binary(
+            serde_cbor::to_vec(&msg).map_err(|e| PublicationError::Publishing(e.to_string()))?,
+        ))
     }
 }
 
 // Handles log indices sent by the server
-impl Handler<ServerMessage<HashSet<Uuid>>> for WebSocketSession {
-    type Result = Result<(), ClientError>;
+impl Handler<LogIndexPut> for WebSocketSession {
+    type Result = Result<(), DataLogError>;
 
-    fn handle(
-        &mut self,
-        msg: ServerMessage<HashSet<Uuid>>,
-        ctx: &mut Self::Context,
-    ) -> Self::Result {
-        Ok(ctx.binary(serde_cbor::to_vec(&msg)?))
+    fn handle(&mut self, msg: LogIndexPut, ctx: &mut Self::Context) -> Self::Result {
+        let msg = ServerMessage::LogIndex(msg);
+        Ok(ctx.binary(serde_cbor::to_vec(&msg).map_err(|e| DataLogError::WriteError(e))?))
     }
 }
 
 // Handles DataLogEntries sent by the server
-impl Handler<ServerMessage<DataLogEntry>> for WebSocketSession {
-    type Result = Result<(), ClientError>;
+impl Handler<DataLogPut<Publication>> for WebSocketSession {
+    type Result = Result<(), DataLogError>;
 
-    fn handle(
-        &mut self,
-        msg: ServerMessage<DataLogEntry>,
-        ctx: &mut Self::Context,
-    ) -> Self::Result {
-        Ok(ctx.binary(serde_cbor::to_vec(&msg)?))
+    fn handle(&mut self, msg: DataLogPut<Publication>, ctx: &mut Self::Context) -> Self::Result {
+        let msg = ServerMessage::LogEntry(msg.0);
+        Ok(ctx.binary(
+            serde_cbor::to_vec(&msg)
+                .map_err(|e| DataLogError::PutDataLogEntry(e))?,
+        ))
     }
 }
 
@@ -171,35 +171,31 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
                 self.hb = Instant::now();
                 info!("Received Binary Message from {}", self.id);
                 match serde_cbor::from_slice::<ClientCommand>(&msg) {
-                    Ok(ClientCommand::GetLogEntries {
-                        client_id,
-                        log_id,
-                        entries,
-                    }) => {
-                        if let Err(e) = self
-                            .datalog
-                            .try_send(DataLogFetch::new(&client_id, &log_id, &entries))
-                        {
+                    Ok(ClientCommand::GetLogEntries { log_id, entries }) => {
+                        if let Err(e) = self.datalog.try_send(DataLogPull {
+                            client: ctx.address().recipient(),
+                            data_log_id: log_id,
+                            selection: entries,
+                        }) {
                             error!("Error while requesting DataLogEntries");
                             ctx.binary(format!("{}", e));
                         }
                     }
-                    Ok(ClientCommand::GetLogIndex { client_id, log_id }) => {
-                        if let Err(e) = self
-                            .datalog
-                            .try_send(DataLogIndex::new(&client_id, &log_id))
-                        {
+                    Ok(ClientCommand::GetLogIndex { log_id }) => {
+                        if let Err(e) = self.datalog.try_send(LogIndexPull {
+                            client: ctx.address().recipient(),
+                            data_log_id: log_id,
+                        }) {
                             error!("Error while requesting DataLogIndex");
                             ctx.binary(format!("{}", e));
                         }
                     }
                     Ok(ClientCommand::SubmitPublication {
-                        client_id,
                         subscription_id,
                         submission,
                     }) => {
                         if let Err(e) = self.pubsub.try_send(SubmitCommand::new(
-                            &client_id,
+                            &self.id,
                             &subscription_id,
                             &submission,
                         )) {
@@ -207,27 +203,23 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
                             ctx.binary(format!("{}", e));
                         }
                     }
-                    Ok(ClientCommand::Subscribe {
-                        client_id,
-                        subscription_id,
-                    }) => {
+                    Ok(ClientCommand::Subscribe { subscription_id }) => {
                         if let Err(e) = self.pubsub.try_send(ManageSubscription::Add {
-                            client_id,
+                            client_id: self.id,
                             subscription_id,
                         }) {
                             error!("Error while attempting to subscribe client to subscription");
                             ctx.binary(format!("{}", e))
                         }
                     }
-                    Ok(ClientCommand::Unsubscribe {
-                        client_id,
-                        subscription_id,
-                    }) => {
-                        if let Err(e) = self.pubsub.try_send(ManageSubscription::Add {
-                            client_id,
+                    Ok(ClientCommand::Unsubscribe { subscription_id }) => {
+                        if let Err(e) = self.pubsub.try_send(ManageSubscription::Remove {
+                            client_id: self.id,
                             subscription_id,
                         }) {
-                            error!("Error while attempting to subscribe client to subscription");
+                            error!(
+                                "Error while attempting to unsubscribe client from subscription"
+                            );
                             ctx.binary(format!("{}", e))
                         }
                     }
@@ -257,30 +249,19 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
     }
 }
 
-/// Represents a message from a client sent to the websocket. 
+/// Represents a message from a client sent to the websocket.
 #[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
 pub enum ClientCommand {
     /// Retrieve a Subscriptions log index
-    GetLogIndex { client_id: Uuid, log_id: Uuid },
+    GetLogIndex { log_id: Uuid },
     /// Fetch one or more entries from the datalog
-    GetLogEntries {
-        client_id: Uuid,
-        log_id: Uuid,
-        entries: Vec<Uuid>,
-    },
+    GetLogEntries { log_id: Uuid, entries: Vec<Uuid> },
     /// Add client to a Subscription, creating it it if doesn't exist
-    Subscribe {
-        client_id: Uuid,
-        subscription_id: Uuid,
-    },
+    Subscribe { subscription_id: Uuid },
     /// Remove client from a Subscription, deleting it, if client was last subscriber
-    Unsubscribe {
-        client_id: Uuid,
-        subscription_id: Uuid,
-    },
+    Unsubscribe { subscription_id: Uuid },
     /// Submit new data for publication
     SubmitPublication {
-        client_id: Uuid,
         subscription_id: Uuid,
         submission: Vec<u8>,
     },
@@ -316,14 +297,11 @@ pub mod tests {
     async fn test_websocket_pubsub_datalog_integration() {
         let test_dir = create_test_directory();
         let sessions = SessionService::new().start();
-        let data_log = DataLogger::new(&test_dir, &sessions.clone().recipient())
-            .unwrap()
-            .start();
-        let pubsub_server = PubSubService::new(&data_log, &sessions.clone().recipient()).start();
+        let data_log = DataLogger::new(&test_dir).unwrap().start();
+        let pubsub_server = PubSubService::new(&data_log).start();
         let session_id = Uuid::new_v4();
         let subscription_id = Uuid::new_v4();
-        let test_submission_data =
-            serde_cbor::to_vec(&String::from("Milton Beats <Giver of Beatings>")).unwrap();
+        let test_data_text = "Milton Beats <Giver of Beatings>";
         let mut srv = test::start(move || {
             App::new()
                 .data(pubsub_server.clone())
@@ -337,7 +315,6 @@ pub mod tests {
             .expect("Could not start ws connection");
         assert!(&conn.is_write_ready());
         let sub_message = ClientCommand::Subscribe {
-            client_id: session_id.clone(),
             subscription_id: subscription_id,
         };
         &conn
@@ -349,15 +326,9 @@ pub mod tests {
             ))
             .await
             .unwrap();
-        let sub_response = match conn.next().await.unwrap().unwrap() {
-            ws::Frame::Binary(a) => Some(serde_cbor::from_slice::<String>(&a[..]).unwrap()),
-            _ => None,
-        };
-        assert_eq!(sub_response, None);
         let pub_message = ClientCommand::SubmitPublication {
-            client_id: session_id.clone(),
             subscription_id: subscription_id,
-            submission: test_submission_data.clone(),
+            submission: test_data_text.into(),
         };
         &conn
             .send(ws::Message::Binary(
@@ -368,19 +339,18 @@ pub mod tests {
             ))
             .await
             .unwrap();
-        let mut publication_data = Vec::new();
-        match conn.next().await.unwrap().unwrap() {
-            ws::Frame::Binary(a) => {
-                publication_data = serde_cbor::from_slice::<ServerMessage<Publication>>(&a[..])
-                    .unwrap()
-                    .0
-                    .data;
-            }
-            _ => (),
+        let issue_server_message = match conn.next().await.unwrap().unwrap() {
+            ws::Frame::Binary(a) => serde_cbor::from_slice::<ServerMessage>(&a[..]).unwrap(),
+            _ => panic!("Could not parse response")
         };
-        assert_eq!(test_submission_data, publication_data);
+        let published_issue = match issue_server_message {
+            ServerMessage::Issue(i) => {
+                assert_eq!(i.0, subscription_id);
+                i
+            },
+            _ => panic!("Received unexpected response: {:?}", issue_server_message)
+        };
         let log_message = ClientCommand::GetLogIndex {
-            client_id: session_id.clone(),
             log_id: subscription_id,
         };
         &conn
@@ -395,17 +365,18 @@ pub mod tests {
         let mut log_response = HashSet::new();
         match conn.next().await.unwrap().unwrap() {
             ws::Frame::Binary(a) => {
-                log_response = serde_cbor::from_slice::<ServerMessage<HashSet<Uuid>>>(&a[..])
-                    .unwrap()
-                    .0
-                    .as_ref()
-                    .to_owned();
+                match serde_cbor::from_slice::<ServerMessage>(&a[..]).unwrap() {
+                    ServerMessage::LogIndex(i) => {
+                        log_response = i.1
+                    },
+                    _ => panic!("Received invalid response from server")
+                }
             }
             _ => (),
         };
         assert!(!&log_response.is_empty());
+        assert!(&log_response.contains(&published_issue.1));
         let entry_message = ClientCommand::GetLogEntries {
-            client_id: session_id.clone(),
             log_id: subscription_id,
             entries: log_response.drain().collect(),
         };
@@ -418,25 +389,21 @@ pub mod tests {
             ))
             .await
             .unwrap();
-        let mut entry_response = Vec::new();
-        match conn.next().await.unwrap().unwrap() {
+        let entry_response = match conn.next().await.unwrap().unwrap() {
             ws::Frame::Binary(a) => {
-                match serde_cbor::from_slice::<ServerMessage<DataLogEntry>>(&a[..])
+                serde_cbor::from_slice::<ServerMessage>(&a[..])
                     .unwrap()
-                    .0
-                    .as_ref()
-                    .to_owned()
-                {
-                    DataLogEntry::Publications(a) => entry_response = a.clone(),
-                    _ => (),
-                }
             }
-            _ => (),
+            _ => panic!("Received invalid server response"),
         };
-        assert!(!entry_response.is_empty());
-        assert_eq!(entry_response[0].data, test_submission_data);
+        let data_log_entry = match entry_response {
+            ServerMessage::LogEntry(e) => {
+                e[0].clone()
+            },
+            _ => panic!("Unexpected server message")
+        };
+        assert_eq!(String::from_utf8(data_log_entry.data).unwrap(), test_data_text);
         let unsub_message = ClientCommand::Unsubscribe {
-            client_id: session_id,
             subscription_id: subscription_id,
         };
         &conn

@@ -12,11 +12,10 @@ async fn main() -> std::io::Result<()> {
     let data_path = PathBuf::from("/tmp/infotainer-server-example");
     let sessions = SessionService::new().start();
     create_dir_all(&data_path)?;
-    let data_logger_addr = DataLogger::new(&data_path, &sessions.clone().recipient())
+    let data_logger_addr = DataLogger::new(&data_path)
         .expect("Could not initiate DataLogger")
         .start();
-    let pubsub_server_addr =
-        PubSubService::new(&data_logger_addr, &sessions.clone().recipient()).start();
+    let pubsub_server_addr = PubSubService::new(&&data_logger_addr).start();
     HttpServer::new(move || {
         App::new()
             .data(pubsub_server_addr.clone())
@@ -25,7 +24,7 @@ async fn main() -> std::io::Result<()> {
             .wrap(middleware::Logger::default())
             .service(web::resource("/ws/{session_id}").route(web::get().to(websocket_handler)))
     })
-    .bind("127.0.0.1:8080")?
+    .bind("127.0.0.1:1312")?
     .run()
     .await
 }
