@@ -7,7 +7,10 @@ use actix::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{data_log::{DataLogPut, DataLogger}, websocket::WebSocketSession};
+use crate::{
+    data_log::{DataLogPut, DataLogger},
+    websocket::WebSocketSession,
+};
 
 /// Represents errors caused during interaction with the PubSubService actor
 #[derive(Debug, Fail, PartialEq, Clone, Serialize, Deserialize)]
@@ -94,7 +97,7 @@ impl PubSubService {
         PubSubService {
             subscriptions: subs,
             sessions: HashMap::new(),
-            data_log_addr: data_log_addr.clone()
+            data_log_addr: data_log_addr.clone(),
         }
     }
 }
@@ -173,9 +176,14 @@ impl Handler<SubmitCommand> for PubSubService {
         Ok(
             if let Ok(subscription) = self.subscriptions.fetch(&msg.subscription_id) {
                 let publication = Publication::new(&msg.subscription_id, &msg.submission);
-                self.data_log_addr.try_send(DataLogPut(vec!(publication.clone()))).map_err(|e|
-                    PublicationError::DataLoggingError(format!("Could not write published message to datalog: {}", e.to_string()))
-                )?;
+                self.data_log_addr
+                    .try_send(DataLogPut(vec![publication.clone()]))
+                    .map_err(|e| {
+                        PublicationError::DataLoggingError(format!(
+                            "Could not write published message to datalog: {}",
+                            e.to_string()
+                        ))
+                    })?;
                 for s in subscription.subscribers {
                     if let Some(recipient) = self.sessions.get(&s) {
                         recipient

@@ -6,9 +6,9 @@ use actix_web_actors::ws;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::ServerMessage;
 use crate::data_log::LogIndexPut;
 use crate::pubsub::ManageSession;
+use crate::ServerMessage;
 use crate::{
     data_log::{DataLogError, DataLogPull, DataLogPut, DataLogger, LogIndexPull},
     pubsub::{
@@ -150,10 +150,7 @@ impl Handler<DataLogPut<Publication>> for WebSocketSession {
 
     fn handle(&mut self, msg: DataLogPut<Publication>, ctx: &mut Self::Context) -> Self::Result {
         let msg = ServerMessage::LogEntry(msg.0);
-        Ok(ctx.binary(
-            serde_cbor::to_vec(&msg)
-                .map_err(|e| DataLogError::PutDataLogEntry(e))?,
-        ))
+        Ok(ctx.binary(serde_cbor::to_vec(&msg).map_err(|e| DataLogError::PutDataLogEntry(e))?))
     }
 }
 
@@ -341,14 +338,14 @@ pub mod tests {
             .unwrap();
         let issue_server_message = match conn.next().await.unwrap().unwrap() {
             ws::Frame::Binary(a) => serde_cbor::from_slice::<ServerMessage>(&a[..]).unwrap(),
-            _ => panic!("Could not parse response")
+            _ => panic!("Could not parse response"),
         };
         let published_issue = match issue_server_message {
             ServerMessage::Issue(i) => {
                 assert_eq!(i.0, subscription_id);
                 i
-            },
-            _ => panic!("Received unexpected response: {:?}", issue_server_message)
+            }
+            _ => panic!("Received unexpected response: {:?}", issue_server_message),
         };
         let log_message = ClientCommand::GetLogIndex {
             log_id: subscription_id,
@@ -366,10 +363,8 @@ pub mod tests {
         match conn.next().await.unwrap().unwrap() {
             ws::Frame::Binary(a) => {
                 match serde_cbor::from_slice::<ServerMessage>(&a[..]).unwrap() {
-                    ServerMessage::LogIndex(i) => {
-                        log_response = i.1
-                    },
-                    _ => panic!("Received invalid response from server")
+                    ServerMessage::LogIndex(i) => log_response = i.1,
+                    _ => panic!("Received invalid response from server"),
                 }
             }
             _ => (),
@@ -390,19 +385,17 @@ pub mod tests {
             .await
             .unwrap();
         let entry_response = match conn.next().await.unwrap().unwrap() {
-            ws::Frame::Binary(a) => {
-                serde_cbor::from_slice::<ServerMessage>(&a[..])
-                    .unwrap()
-            }
+            ws::Frame::Binary(a) => serde_cbor::from_slice::<ServerMessage>(&a[..]).unwrap(),
             _ => panic!("Received invalid server response"),
         };
         let data_log_entry = match entry_response {
-            ServerMessage::LogEntry(e) => {
-                e[0].clone()
-            },
-            _ => panic!("Unexpected server message")
+            ServerMessage::LogEntry(e) => e[0].clone(),
+            _ => panic!("Unexpected server message"),
         };
-        assert_eq!(String::from_utf8(data_log_entry.data).unwrap(), test_data_text);
+        assert_eq!(
+            String::from_utf8(data_log_entry.data).unwrap(),
+            test_data_text
+        );
         let unsub_message = ClientCommand::Unsubscribe {
             subscription_id: subscription_id,
         };

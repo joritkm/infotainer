@@ -44,16 +44,24 @@ impl StreamHandler<Result<Frame, WsProtocolError>> for Connection {
                     if let Ok(iss) = serde_cbor::from_slice::<ServerMessage>(&data) {
                         match iss {
                             ServerMessage::Issue(i) => {
-                                let cmd = ClientCommand::GetLogEntries {log_id: i.0, entries: vec![i.1] };
-                                self.0.write(Message::Binary(Bytes::from(serde_cbor::to_vec(&cmd).unwrap())));
-                            },
+                                let cmd = ClientCommand::GetLogEntries {
+                                    log_id: i.0,
+                                    entries: vec![i.1],
+                                };
+                                self.0.write(Message::Binary(Bytes::from(
+                                    serde_cbor::to_vec(&cmd).unwrap(),
+                                )));
+                            }
                             ServerMessage::LogEntry(e) => {
                                 for p in e {
                                     let data: String = String::from_utf8(p.data).unwrap();
-                                    println!("Received publication {} for Subscription {}:\n{}", p.publication_id, p.subscription_id, data)
+                                    println!(
+                                        "Received publication {} for Subscription {}:\n{}",
+                                        p.publication_id, p.subscription_id, data
+                                    )
                                 }
-                            },
-                            ServerMessage::LogIndex(i) => println!("{:?}", i)
+                            }
+                            ServerMessage::LogIndex(i) => println!("{:?}", i),
                         }
                     } else {
                         println!("Unable to handle received message");

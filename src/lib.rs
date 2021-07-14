@@ -51,5 +51,5 @@ use serde::{Deserialize, Serialize};
 pub enum ServerMessage {
     Issue(prelude::Issue),
     LogIndex(LogIndexPut),
-    LogEntry(Vec<Publication>)
+    LogEntry(Vec<Publication>),
 }
