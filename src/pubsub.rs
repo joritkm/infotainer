@@ -4,7 +4,9 @@ use actix::{
     prelude::{Actor, Context, Handler, Message},
     Addr,
 };
+use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use uuid::Uuid;
 
 use crate::{
@@ -13,18 +15,18 @@ use crate::{
 };
 
 /// Represents errors caused during interaction with the PubSubService actor
-#[derive(Debug, Fail, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Debug, Error, PartialEq, Clone, Serialize, Deserialize)]
 pub enum PublicationError {
-    #[fail(display = "Could not log publication to the data log: {}", _0)]
+    #[error("Could not log publication to the data log: {0}")]
     DataLoggingError(String),
 
-    #[fail(display = "Error while communicating with SessionService: {}", _0)]
+    #[error("Error while communicating with SessionService: {0}")]
     SessionService(String),
 
-    #[fail(display = "Error while publishing: {}", _0)]
+    #[error("Error while publishing: {0}")]
     Publishing(String),
 
-    #[fail(display = "Error while handling subscriptions: {}", _0)]
+    #[error("Error while handling subscriptions: {0}")]
     Subscriptions(&'static str),
 }
 

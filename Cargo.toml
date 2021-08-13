@@ -29,7 +29,7 @@ actix-web-actors = "3.0"
 actix-rt = "1"
 env_logger = "0.9"
 faccess = "0.2"
-failure = "0.1.8"
+thiserror = "1.0.26"
 futures-util = "0.3"
 log = "0.4"
 uuid = { version="0.8", features = ["serde", "v4"] }

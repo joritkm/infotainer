@@ -23,12 +23,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-#[macro_use]
-extern crate log;
-
-#[macro_use]
-extern crate failure;
-
 pub mod data_log;
 pub mod pubsub;
 pub mod websocket;

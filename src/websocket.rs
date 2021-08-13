@@ -3,7 +3,9 @@ use std::time::{Duration, Instant};
 use actix::prelude::{Actor, ActorContext, Addr, AsyncContext, Handler, Running, StreamHandler};
 use actix_web::{error, web};
 use actix_web_actors::ws;
+use log::{debug, error, info, trace, warn};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use uuid::Uuid;
 
 use crate::data_log::LogIndexPut;
@@ -28,9 +30,9 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Represents errors caused during client interaction
-#[derive(Debug, Fail, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Debug, Error, PartialEq, Clone, Serialize, Deserialize)]
 pub enum ClientError {
-    #[fail(display = "Invalid Input: {}", _0)]
+    #[error("Invalid Input: {0}")]
     InvalidInput(String),
 }
 
