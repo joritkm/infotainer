@@ -27,7 +27,7 @@ SOFTWARE.
 extern crate log;
 
 #[macro_use]
-extern crate failure;
+extern crate thiserror;
 
 pub mod data_log;
 pub mod pubsub;

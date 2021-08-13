@@ -15,25 +15,25 @@ use crate::pubsub::{Publication, Subscription};
 
 pub type DataLogIndex = HashMap<Uuid, HashSet<Uuid>>;
 
-#[derive(Debug, Fail)]
+#[derive(Debug, Error)]
 pub enum DataLogError {
-    #[fail(display = "Fs error: {}", _0)]
+    #[error("Fs error: {0}")]
     FileSystem(String),
 
-    #[fail(display = "Failed sending index: {:?}", _0)]
-    PullIndex(#[cause] SendError<LogIndexPut>),
+    #[error("Failed sending index: {0:?}")]
+    PullIndex(#[source] SendError<LogIndexPut>),
 
-    #[fail(display = "Failed sending log entries: {:?}", _0)]
-    PullDataLogEntry(#[cause] SendError<DataLogPut<Publication>>),
+    #[error("Failed sending log entries: {0:?}")]
+    PullDataLogEntry(#[source] SendError<DataLogPut<Publication>>),
 
-    #[fail(display = "Could not process DataLogPut: {}", _0)]
-    PutDataLogEntry(#[cause] serde_cbor::Error),
+    #[error("Could not process DataLogPut: {0}")]
+    PutDataLogEntry(#[source] serde_cbor::Error),
 
-    #[fail(display = "Could not write data: {:?}", _0)]
-    WriteError(#[cause] serde_cbor::Error),
+    #[error("Could not write data: {0:?}")]
+    WriteError(#[source] serde_cbor::Error),
 
-    #[fail(display = "Could not read data: {:?}", _0)]
-    ReadError(#[cause] serde_cbor::Error),
+    #[error("Could not read data: {0:?}")]
+    ReadError(#[source] serde_cbor::Error),
 }
 
 impl From<std::io::Error> for DataLogError {

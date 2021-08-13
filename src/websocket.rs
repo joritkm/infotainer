@@ -28,9 +28,9 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Represents errors caused during client interaction
-#[derive(Debug, Fail, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Debug, Error, PartialEq, Clone, Serialize, Deserialize)]
 pub enum ClientError {
-    #[fail(display = "Invalid Input: {}", _0)]
+    #[error("Invalid Input: {0}")]
     InvalidInput(String),
 }
 
