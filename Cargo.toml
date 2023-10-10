@@ -1,0 +1,8 @@
+[workspace]
+
+members = [
+    "chronicle",
+    "editorial",
+    "tabloid"
+]
+

@@ -1,16 +1,12 @@
 [package]
-name = "infotainer"
+name = "editorial"
 authors = ["Jorit Kleine-Möllhoff <joppich@bricknet.de>"]
 version = "0.1.0"
 edition = "2021"
 repository = "https://github.com/joppich/infotainer"
 readme = "README.md"
-description = "a message queue and data pipeline service"
+description = "infotainers receiving and dispatching component"
 license = "MIT OR APACHE-2"
-
-[[example]]
-name = "client"
-path = "examples/client.rs"
 
 [dependencies]
 tonic = "0.10"

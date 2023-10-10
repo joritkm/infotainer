@@ -3,12 +3,18 @@
 ![Test](https://github.com/joppich/infotainer/workflows/Rust/badge.svg)
 [![codecov](https://codecov.io/gh/joppich/infotainer/branch/master/graph/badge.svg)](https://codecov.io/gh/joppich/infotainer)
 
-Distributed data streaming. Very much WIP.
+Distributed messaging. Very much WIP.
 
 ### Features
-- [ ] Create message topics and watch the list of current topics
-- [ ] Subscribe and publish messages to topics
-- [ ] Archive, replay and delete topics
+* Tabloid (message broker component):
+    - Create message topics and watch the list of current topics
+    - Subscribe and publish messages to topics
+    - Archive, replay and delete topics
+* Chronicle (storage component):
+    - store received messages
+    - maintain indices of topics
+* Editorial (metadata tracking component):
+    - save metadata on topics and messages
 
 ### Development
 Design decisions and detailed development directions are documented by simple architecture design records.  

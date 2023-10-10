@@ -219,6 +219,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
+name = "chronicle"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "futures",
+ "futures-util",
+ "prost",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tonic-build",
+ "tonic-reflection",
+ "uuid",
+]
+
+[[package]]
 name = "clap"
 version = "4.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -550,23 +567,6 @@ checksum = "8adf3ddd720272c6ea8bf59463c04e0f93d0bbf7c5439b691bca2987e0270897"
 dependencies = [
  "equivalent",
  "hashbrown 0.14.1",
-]
-
-[[package]]
-name = "infotainer"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "futures",
- "futures-util",
- "prost",
- "tokio",
- "tokio-stream",
- "tonic",
- "tonic-build",
- "tonic-reflection",
- "uuid",
 ]
 
 [[package]]
