@@ -1,17 +1,17 @@
 {
     "version": "0.2.0",
     "configurations": [
-    {
-        "type": "lldb",
-        "request": "launch",
-        "name": "Cargo launch",
-        "cargo": {
-            "args": [
-                "build",
-            ]
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "App Launch",
+            "cargo": {
+                "args": [
+                    "build",
+                ]
+            },
+            "program": "${workspaceFolder}/app/target/${cargo:program}",
+            "cwd": "${workspaceFolder}",
         },
-        "program": "${cargo:program}",
-        "args": []
-    },
     ]
 }

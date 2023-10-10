@@ -1,0 +1,12 @@
+syntax = "proto3";
+package "pubsub";
+
+service Topic {
+    rpc Publish(Message) returns (TopicUpdated);
+    
+    rpc Create() returns (TopicCreated);
+
+    rpc Watch() returns (stream TopicList);
+    
+    rpc Subscribe(TopicId) returns (stream Message);
+}
