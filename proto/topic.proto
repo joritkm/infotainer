@@ -1,12 +1,14 @@
 syntax = "proto3";
-package "pubsub";
+package topic;
 
 service Topic {
-    rpc Publish(Message) returns (TopicUpdated);
-    
-    rpc Create() returns (TopicCreated);
-
-    rpc Watch() returns (stream TopicList);
-    
-    rpc Subscribe(TopicId) returns (stream Message);
+rpc Publish(PublishMessageParams) returns (TopicUpdated);
+rpc Create(CreateTopicParams) returns (TopicCreated);
+rpc Watch(WatchTopicsParams) returns (stream TopicList);
+rpc Subscribe(SubscribeTopicParams) returns (stream Message);
 }
+
+message PublishMessageParams {};
+message CreateTopicParams {};
+message WatchTopicParams {};
+message SubscribeTopicParams {};
