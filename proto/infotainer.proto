@@ -1,0 +1,130 @@
+syntax = "proto3";
+package infotainer;
+
+service Storage {
+  rpc Submit(SubmitStorageParams) returns (SubmitStorageResponse);
+
+  rpc Fetch(FetchStorageParams) returns (FetchStorageResponse) ;
+
+  rpc Delete(DeleteStorageParams) returns (DeleteStorageResponse);
+}
+
+service MessageBroker {
+  // Submits a new message to a topic for distribution among subscribers
+  rpc Publish(PublishMessageParams) returns (TopicUpdated);
+    
+  // Creates a new topic
+  rpc Create(CreateTopicParams) returns (TopicCreated);
+    
+  // Requests streaming all available topics
+  rpc WatchTopics(WatchTopicsParams) returns (stream TopicList);
+    
+  // Subscribe to a topic
+  rpc Subscribe(SubscribeTopicParams) returns (stream PublishedMessage);
+}
+
+service MetadataService {
+  rpc Submit(SubmitMetadataParams) returns (SubmitMetadataResponse);
+
+  rpc Fetch(FetchMetadataParams) returns (FetchMetadataResponse);
+
+  rpc Update(UpdateMetadataParams) returns (UpdateMetadataResponse);
+
+  rpc Delete(DeleteMetadataParams) returns (DeleteMetadataResponse);
+}
+
+message DeleteMetadataParams {
+  bytes metadata_id = 1;
+};
+
+message FetchMetadataParams {
+  bytes metadata_id = 1;
+};
+
+message SubmitMetadataParams {
+  bytes metadata_body = 1;
+};
+
+message UpdateMetadataParams {
+  bytes metadata_body = 1;
+};
+
+message DeleteMetadataResponse {
+  bytes metadata_id = 1;
+};
+
+message FetchMetadataResponse {
+  bytes metadata_body = 1;
+};
+
+message SubmitMetadataResponse {
+  bytes metadata_id = 1;
+};
+
+message UpdateMetadataResponse {
+  bytes metadata_id = 1;
+};
+
+message DeleteStorageParams {
+  bytes message_id = 1;
+};
+
+message FetchStorageParams {
+  bytes message_id = 1;
+};
+
+message SubmitStorageParams {
+  bytes message_body = 1;
+};
+
+message DeleteStorageResponse {
+  bytes message_id = 1;
+};
+
+message FetchStorageResponse {
+  bytes message_body = 1;
+};
+
+message SubmitStorageResponse {
+  bytes message_id = 1;
+}
+
+message PublishMessageParams {
+  bytes content = 1;
+  optional bytes schema_id = 2;
+};
+
+message CreateTopicParams {
+  string name = 1;
+};
+
+message WatchTopicsParams {
+
+};
+
+message SubscribeTopicParams {
+  bytes topic_id = 1;
+};
+
+message TopicUpdated {
+  bytes message_id = 1;
+};
+
+message TopicCreated {
+  bytes topic_id = 1;
+};
+
+message TopicList {
+  repeated TopicInfo items = 1;
+};
+
+message PublishedMessage {
+  bytes message_id = 1;
+  bytes message_body_id = 2;
+  bytes message_metadata_id = 3; 
+};
+
+message TopicInfo {
+  bytes id = 1;
+  string name = 2;
+};

@@ -1,40 +1,36 @@
-# WIP: infotainer
+## infotainer
 
 ![Test](https://github.com/joppich/infotainer/workflows/Rust/badge.svg)
 [![codecov](https://codecov.io/gh/joppich/infotainer/branch/master/graph/badge.svg)](https://codecov.io/gh/joppich/infotainer)
 
-__Note__: At the moment, this project is intended for me to learn and implement stuff I'm interested in. It's not really of any practical use to anyone.
+Distributed messaging. Very much WIP.
 
-Infotainer contains building blocks for simple pubsub services based on actix/-web, cbor and websockets.
+### Components
+* Tabloid (message broker component):
+    - Create message topics and watch the list of current topics
+    - Subscribe and publish messages to topics
+    - Archive, replay and delete topics
+* Chronicle (storage component):
+    - store received messages
+    - maintain indices of topics
+* Editorial (metadata tracking component):
+    - save metadata on topics and messages
+* infotainer-common (shared library for package)
 
-## Components
-* __[websocket interface](src/websocket.rs)__: handles client-server interaction
-* __[pubsub service](src/pubsub.rs)__: manages subscriptions and handles publication of client submissions
-* __[datalog service](src/data_log.rs)__: maintains log indices for and handles filesystem interactions
+### Development
+Design decisions and detailed development directions are documented by simple architecture design records.  
+They can be found <a href="https://github.com/joppich/infotainer/docs/adr/">here</a>.
 
-The websocket interface is an actor whose handlers are largely built around the `ClientCommand` and `ServerResponse` types. 
-`ClientCommand` consists of struct variants holding data sent from client to server. These are translated into actix `Message`s by the `WebSocketSession` actor.  
-The `ServerResponse` type is used to wrap data sent from server to client and can contain `HashSet<Uuid>`, representing a subscriptions log index, `Publication`, representing data published by some client, or `DataLogEntry`, containing one or more `Publication`s previously submitted to the data log.  
-
-The pubsub service actor handles the `SubmitCommand` and `ManageSubscription` messages. When data is submitted for publication, the actor looks up the addressed `Subscription`, generates a `Publication`, sends it, wrapped in a `DataLogPut` message, to the `DataLogger` and proceeds to distribute it to connected clients subscribed to the `Subscription`.  
-`ManageSubscription` has two variants, `Add` and `Remove`, and is used by clients to un-/subscribe from/to `Subscriptions`.
-
-`DatalogService` enables persisting the server state as well as published data. `DataLogPut` messages represent write requests for `SubscriptionMeta`, subscriber lists and `Publication`s. `DataLogFetch` messages are used to retrieve persisted data. Additionally, it maintains a log of subscriptions and their publications.
-
-## Features
-
-- [x] websocket interface/ client message types
-- [x] Subscription/Subscription table
-- [x] Broadcast-type subscriptions
-- [ ] Queue-type subscriptions
-- [x] Publication
-- [x] publishing messages
-- [x] session management
-- [x] data log service
-- [x] persisting/retrieval of publication data
-- [ ] persisting/retrieval of subscription metadata
-- [ ] recreating server state from persisted data
-
-## Is it any good?
+### Is it any good?
 [yes](https://news.ycombinator.com/item?id=3067434)
+
+### License
+
+Licensed under either of <a href="docs/LICENSE-APACHE">Apache License, Version
+2.0</a> or <a href="docs/LICENSE-MIT">MIT license</a> at your option.
+
+
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in Serde by you, as defined in the Apache-2.0 license, shall be
+dual licensed as above, without any additional terms or conditions.
 
