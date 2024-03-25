@@ -3,7 +3,6 @@
 Date: 2023-10-10
 
 ## Status
-
     🟢 Accepted
 
 ## Context

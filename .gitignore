@@ -1,8 +1,2 @@
-*.swp
 target/
-**/*.rs.bk
-
-
-# Added by cargo
-
-/target
+infotainer.bin

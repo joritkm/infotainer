@@ -1,8 +1,12 @@
 [workspace]
+resolver = "2"
+package.authors = ["Jorit Kleine-Möllhoff <joppich@bricknet.de>"]
+package.description = "A distributed messaging service"
+package.edition = "2021"
+package.publish = false
+package.repository = "https://github.com/joppich/infotainer"
+package.license = "MIT or APACHE-2"
+package.readme = "README.md"
 
-members = [
-    "chronicle",
-    "editorial",
-    "tabloid"
-]
 
+members = ["chronicle", "editorial", "infotainer-common", "tabloid"]

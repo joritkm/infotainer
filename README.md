@@ -5,7 +5,7 @@
 
 Distributed messaging. Very much WIP.
 
-### Features
+### Components
 * Tabloid (message broker component):
     - Create message topics and watch the list of current topics
     - Subscribe and publish messages to topics
@@ -15,6 +15,7 @@ Distributed messaging. Very much WIP.
     - maintain indices of topics
 * Editorial (metadata tracking component):
     - save metadata on topics and messages
+* infotainer-common (shared library for package)
 
 ### Development
 Design decisions and detailed development directions are documented by simple architecture design records.  

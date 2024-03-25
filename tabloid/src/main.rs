@@ -1,3 +1,5 @@
+use infotainer;
+
 fn main() {
-    println!("Hello, world!");
+    println!("Foo")
 }
